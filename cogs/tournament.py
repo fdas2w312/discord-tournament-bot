@@ -39,23 +39,9 @@ from discord.ext import commands
 import database as db
 import config
 from utils.bracket import generate_bracket, generate_bracket_simple  # noqa: F401 — generate_bracket_simple используется в generate_bracket
-from utils.challonge_api import ChallongeClient, ChallongeError
 import logging
 
 logger = logging.getLogger("tournament")
-
-# Глобальный Challonge-клиент (инициализируется в cog_load)
-_challonge: ChallongeClient | None = None
-
-
-def _get_challonge() -> ChallongeClient | None:
-    """Возвращает Challonge-клиент, если API-ключ настроен."""
-    global _challonge
-    if not config.CHALLONGE_API_KEY or config.CHALLONGE_API_KEY == "YOUR_CHALLONGE_API_KEY_HERE":
-        return None
-    if _challonge is None:
-        _challonge = ChallongeClient(config.CHALLONGE_API_KEY)
-    return _challonge
 
 
 # ===========================================================================
@@ -717,9 +703,8 @@ class ClosedView(discord.ui.View):
 class BracketView(discord.ui.View):
     """Панель этапа BRACKET — управление матчами."""
 
-    def __init__(self, tournament_id: int, challonge_url: str = "") -> None:
+    def __init__(self, tournament_id: int) -> None:
         super().__init__(timeout=None)
-        self.add_item(ChallongeLinkButton(tournament_id, challonge_url))
         self.add_item(RefreshButton(tournament_id))
         self.add_item(StartMatchButton(tournament_id))
         self.add_item(SetWinnerButton(tournament_id))
@@ -747,18 +732,7 @@ class RefreshButton(discord.ui.Button):
         )
 
 
-class ChallongeLinkButton(discord.ui.Button):
-    """🔗 Открыть сетку на Challonge."""
 
-    def __init__(self, tournament_id: int, challonge_url: str) -> None:
-        self.challonge_url = challonge_url
-        has_url = bool(challonge_url)
-        super().__init__(
-            style=discord.ButtonStyle.link if has_url else discord.ButtonStyle.secondary,
-            label="🔗 Открыть сетку",
-            url=challonge_url if has_url else None,
-            disabled=not has_url,
-        )
 
 
 class StartMatchButton(discord.ui.Button):
@@ -1097,28 +1071,14 @@ class GenerateBracketButton(discord.ui.Button):
             )
             return
 
-        # Сначала генерируем локальную сетку
+        # Генерируем локальную сетку
         await _generate_bracket(self.tournament_id)
-
-        # Затем пытаемся создать турнир на Challonge
-        challonge_msg = ""
-        client = _get_challonge()
-        if client:
-            try:
-                challonge_msg = await _create_challonge_tournament(
-                    client, self.tournament_id, tournament["name"], approved,
-                )
-            except ChallongeError as exc:
-                challonge_msg = f"\n⚠️ Challonge: {exc}"
-                logger.warning("Challonge error for tournament %s: %s", self.tournament_id, exc)
-        else:
-            challonge_msg = "\nℹ️ Challonge API не настроен — сетка только в боте."
 
         await db.tournament_set_status(self.tournament_id, "bracket")
         await _update_panel_by_tournament(interaction.client, self.tournament_id)  # type: ignore
 
         await interaction.response.edit_message(
-            content=f"✅ Сетка сгенерирована! {len(approved)} команд.{challonge_msg}",
+            content=f"✅ Сетка сгенерирована! {len(approved)} команд.",
             view=None,
         )
 
@@ -1137,16 +1097,7 @@ class DeleteTournamentButton(discord.ui.Button):
         self.tournament_id = tournament_id
 
     async def callback(self, interaction: discord.Interaction) -> None:
-        # Удаляем с Challonge, если привязан
         tournament = await db.tournament_get(self.tournament_id)
-        if tournament and tournament.get("challonge_id"):
-            client = _get_challonge()
-            if client:
-                try:
-                    await client.delete_tournament(tournament["challonge_id"])
-                except ChallongeError:
-                    pass  # Не критично
-
         await db.tournament_delete(self.tournament_id)
         await interaction.response.edit_message(content="🗑 Турнир удалён.", view=None)
 
@@ -1391,32 +1342,6 @@ async def _do_set_winner(interaction: discord.Interaction, match_id: int, winner
             await db.tournament_set_status(tournament_id, "finished")
             embed.add_field(name="🎉 Турнир завершён!", value=f"**{winner_name}** — чемпион!", inline=False)
 
-            # Завершаем турнир на Challonge
-            tournament = await db.tournament_get(tournament_id)
-            if tournament and tournament.get("challonge_id"):
-                client = _get_challonge()
-                if client:
-                    try:
-                        await client.finalize_tournament(tournament["challonge_id"])
-                    except ChallongeError:
-                        pass
-
-    # Обновляем результат на Challonge
-    tournament = await db.tournament_get(tournament_id)
-    if tournament and tournament.get("challonge_id"):
-        client = _get_challonge()
-        if client and winner_team and winner_team.get("challonge_participant_id"):
-            try:
-                challonge_match_id = match_data.get("challonge_match_id", 0)
-                if challonge_match_id:
-                    await client.update_match(
-                        tournament_url=tournament["challonge_id"],
-                        match_id=challonge_match_id,
-                        winner_id=winner_team["challonge_participant_id"],
-                    )
-            except ChallongeError as exc:
-                logger.warning("Challonge update_match error: %s", exc)
-
     await interaction.response.edit_message(content=None, embed=embed, view=None)
 
     await _update_panel_by_tournament(interaction.client, tournament_id)  # type: ignore
@@ -1505,73 +1430,6 @@ async def _generate_bracket(tournament_id: int) -> None:
                     if nm:
                         slot = "team1_id" if m["match_index"] % 2 == 0 else "team2_id"
                         await db.match_update_team(nm["id"], slot, m["team1_id"])
-
-
-async def _create_challonge_tournament(
-    client: ChallongeClient,
-    tournament_id: int,
-    tournament_name: str,
-    approved_teams: list[dict],
-) -> str:
-    """
-    Создаёт турнир на Challonge, добавляет участников и запускает его.
-
-    Возвращает строку с результатом (ссылка или сообщение об ошибке).
-    Привязывает Challonge-данные к турниру, командам и матчам в БД.
-    """
-    import time
-
-    # Генерируем уникальный URL-слаг
-    slug = f"bot_{tournament_id}_{int(time.time())}"
-
-    # Создаём турнир на Challonge
-    resp = await client.create_tournament(
-        name=tournament_name,
-        url=slug,
-        tournament_type="single elimination",
-    )
-    challonge_id = ChallongeClient.extract_tournament_id(resp)
-    challonge_url = ChallongeClient.extract_tournament_url(resp)
-    full_url = ChallongeClient.build_full_url(challonge_url)
-
-    # Сохраняем Challonge-данные в БД
-    await db.tournament_set_challonge(tournament_id, challonge_id, full_url)
-
-    # Добавляем участников на Challonge и сохраняем маппинг participant_id -> team
-    participant_map: dict[int, int] = {}  # challonge_participant_id -> local_team_id
-    for i, team in enumerate(approved_teams):
-        seed = i + 1
-        # Устанавливаем посев локально
-        await db.team_set_seed(team["id"], seed)
-
-        p_resp = await client.add_participant(
-            tournament_url=challonge_url,
-            name=team["name"],
-            seed=seed,
-        )
-        p_id = ChallongeClient.extract_participant_id(p_resp)
-        await db.team_set_challonge_participant(team["id"], p_id)
-        participant_map[p_id] = team["id"]
-
-    # Запускаем турнир на Challonge (генерирует сетку)
-    await client.start_tournament(challonge_url)
-
-    # Получаем матчи с Challonge и привязываем к локальным матчам
-    challonge_matches = await client.get_matches(challonge_url)
-    for cm in challonge_matches:
-        m_data = cm.get("match", cm)
-        ch_match_id = int(m_data.get("id", 0))
-        round_num = int(m_data.get("round", 1))
-        # Находим соответствующий локальный матч
-        local_matches = await db.match_list(tournament_id)
-        # Challonge нумерует раунды с 1 для победителей
-        round_local = [m for m in local_matches if m["round"] == round_num and not m.get("challonge_match_id")]
-        if round_local:
-            # Берём первый непривязанный матч этого раунда
-            local_match = round_local[0]
-            await db.match_set_challonge_match(local_match["id"], ch_match_id)
-
-    return f"\n🔗 Сетка на Challonge: {full_url}"
 
 
 # ===========================================================================
@@ -1668,12 +1526,11 @@ async def _build_bracket_panel(tournament_id: int, tournament: dict, fmt: str) -
     """Собирает embed + view для этапа BRACKET / FINISHED."""
     teams = await db.team_list(tournament_id)
     matches = await db.match_list(tournament_id)
-    challonge_url = tournament.get("challonge_url", "") or ""
 
     if matches:
-        bracket_text = generate_bracket(teams, matches, tournament["name"], challonge_url=challonge_url)
+        bracket_text = generate_bracket(teams, matches, tournament["name"])
     else:
-        bracket_text = generate_bracket_simple(teams, tournament["name"], challonge_url=challonge_url)
+        bracket_text = generate_bracket_simple(teams, tournament["name"])
 
     status_emoji = {"bracket": "⚔️", "finished": "🏆"}.get(tournament["status"], "❓")
     status_text = {"bracket": "Идёт", "finished": "Завершён"}.get(tournament["status"], tournament["status"])
@@ -1698,7 +1555,7 @@ async def _build_bracket_panel(tournament_id: int, tournament: dict, fmt: str) -
     if tournament["status"] == "finished":
         view = FinishedView(tournament_id)
     else:
-        view = BracketView(tournament_id, challonge_url=challonge_url)
+        view = BracketView(tournament_id)
 
     return (embed, view)
 
@@ -1842,12 +1699,11 @@ class TournamentCog(commands.Cog, name="Tournament"):
         if t["status"] in ("bracket", "finished"):
             teams = await db.team_list(tid)
             matches = await db.match_list(tid)
-            challonge_url = t.get("challonge_url", "") or ""
 
             if matches:
-                bracket_text = generate_bracket(teams, matches, t["name"], challonge_url=challonge_url)
+                bracket_text = generate_bracket(teams, matches, t["name"])
             else:
-                bracket_text = generate_bracket_simple(teams, t["name"], challonge_url=challonge_url)
+                bracket_text = generate_bracket_simple(teams, t["name"])
 
             status_emoji = {"bracket": "⚔️", "finished": "🏆"}.get(t["status"], "❓")
             status_text = {"bracket": "Идёт", "finished": "Завершён"}.get(t["status"], t["status"])

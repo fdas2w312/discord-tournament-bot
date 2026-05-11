@@ -1,13 +1,45 @@
 """
-Генератор текстового мини-превью турнирной сетки (Single Elimination).
+Генератор турнирной сетки с Unicode box-drawing символами (Single Elimination).
 
-Используется внутри Discord embed как краткая сводка прогресса.
-Полная визуальная сетка — на Challonge (ссылка указывается в embed).
+Визуальная сетка в Discord через моноширинный код-блок:
 
-- Код-блок для моноширинного отображения в Discord
-- Матчи с двумя слотами команд
-- Автоматическое масштабирование под количество участников
-- Статусы матчей: ⏳ ожидание, ⚔️ идёт, ✅ завершён
+  ┌──────────────┐
+  │  Team Alpha   │──┐
+  └──────────────┘  │
+                    ├──┐
+  ┌──────────────┐  │  │
+  │  Team Beta    │──┘  │
+  └──────────────┘     │
+                        ├──┐
+  ┌──────────────┐     │  │
+  │  Team Gamma   │──┐  │  │
+  └──────────────┘  │  │  │
+                    ├──┘  │
+  ┌──────────────┐  │     │
+  │  Team Delta   │──┘    │
+  └──────────────┘       │
+                          ├── Champion
+  ┌──────────────┐       │
+  │  Team Epsilon │──┐   │
+  └──────────────┘  │   │
+                    ├──┐ │
+  ┌──────────────┐  │  │ │
+  │  Team Zeta    │──┘  │ │
+  └──────────────┘     │ │
+                        ├──┘
+  ┌──────────────┐     │
+  │  Team Eta     │──┐  │
+  └──────────────┘  │  │
+                    ├──┘
+  ┌──────────────┐  │
+  │  Team Theta   │──┘
+  └──────────────┘
+
+Поддерживает:
+  - 2, 4, 8, 16, 32 участника (степени двойки, с bye)
+  - Статусы: ⏳ ожидание, ⚔️ играется, ✅ завершён
+  - Победители выделены ★, проигравшие зачёркнуты
+  - Автоматическое масштабирование под длину имён
 """
 
 from __future__ import annotations
@@ -30,49 +62,14 @@ def _round_label(max_round: int, current_round: int) -> str:
     return f"Раунд {current_round}"
 
 
-def _team_name(team_id: int, team_map: dict, winner_id: int = 0) -> str:
-    """Возвращает отображаемое имя команды с форматированием."""
-    if not team_id:
-        return "TBD"
-
-    team = team_map.get(team_id)
-    if not team:
-        return "???"
-
-    name = team.get("name", "???")
-    seed = team.get("seed", 0)
-
-    # Добавляем посев (seed), если есть
-    display = f"{seed}. {name}" if seed and seed > 0 else name
-
-    has_winner = bool(winner_id)
-
-    if winner_id and winner_id == team_id:
-        # Победитель
-        return f"**{display}**"
-    elif has_winner:
-        # Проигравший
-        return f"~~{display}~~"
-    else:
-        return display
-
-
-def _match_status_emoji(status: str) -> str:
-    if status == "playing":
-        return "⚔️"
-    elif status == "completed":
-        return "✅"
-    return "⏳"
-
-
 def _clip(text: str, max_len: int) -> str:
     if len(text) <= max_len:
         return text
-    return text[:max_len - 3] + "..."
+    return text[:max_len - 1] + "…"
 
 
 # ---------------------------------------------------------------------------
-# Главная функция — генерация мини-превью сетки
+# Списочная сетка (для этапов с матчами)
 # ---------------------------------------------------------------------------
 
 def generate_bracket(
@@ -82,13 +79,11 @@ def generate_bracket(
     challonge_url: str = "",
 ) -> str:
     """
-    Генерирует текстовое мини-превью турнирной сетки для Discord embed.
-
-    Показывает краткую сводку матчей по раундам.
-    Полная сетка доступна по ссылке на Challonge.
+    Генерирует турнирную сетку в виде списка матчей по раундам
+    с визуальным оформлением и статусами.
     """
     if not matches:
-        return generate_bracket_simple(teams, tournament_name, challonge_url)
+        return generate_bracket_simple(teams, tournament_name)
 
     team_map = {t["id"]: t for t in teams}
     max_round = max(m["round"] for m in matches)
@@ -100,49 +95,33 @@ def generate_bracket(
     for r in rounds:
         rounds[r].sort(key=lambda m: m["match_index"])
 
-    # --- Вычисляем ширину имён команд ---
-    max_name_len = 14  # минимум
+    # Ширина имён
+    name_width = 12
     for m in matches:
         for slot in ("team1_id", "team2_id"):
             tid = m.get(slot, 0)
             if tid and tid in team_map:
-                name = team_map[tid].get("name", "")
-                seed = team_map[tid].get("seed", 0)
-                display = f"{seed}. {name}" if seed and seed > 0 else name
-                max_name_len = max(max_name_len, len(display) + 4)
+                name_width = max(name_width, min(len(team_map[tid].get("name", "")) + 2, 20))
 
-    max_name_len = min(max_name_len, 28)  # ограничение для Discord
-
-    # --- Строим текст ---
     lines: list[str] = []
-
-    # Заголовок
-    lines.append(f"🏆 {tournament_name}")
+    lines.append(f"🏆 **{tournament_name}**")
     lines.append("")
-
-    # Ссылка на Challonge (если есть)
-    if challonge_url:
-        full_url = challonge_url if challonge_url.startswith("http") else f"https://challonge.com/{challonge_url}"
-        lines.append(f"🔗 Полная сетка: {full_url}")
-        lines.append("")
 
     # Статистика
     total = len(matches)
     completed = sum(1 for m in matches if m["status"] == "completed")
     playing = sum(1 for m in matches if m["status"] == "playing")
     pending = total - completed - playing
-
-    lines.append(f"📊 Матчей: {total} | ✅ {completed} | ⚔️ {playing} | ⏳ {pending}")
+    lines.append(f"📊 {total} матчей: ✅ {completed}  ⚔️ {playing}  ⏳ {pending}")
     lines.append("")
 
-    # Для каждого раунда выводим матчи
+    # Для каждого раунда
     for rnd in range(1, max_round + 1):
         round_matches = rounds.get(rnd, [])
         if not round_matches:
             continue
 
         label = _round_label(max_round, rnd)
-        lines.append(f"── {label} {'─' * max(1, 40 - len(label) - 4)}")
 
         for m in round_matches:
             t1_id = m.get("team1_id", 0)
@@ -152,50 +131,83 @@ def generate_bracket(
             score = m.get("score", "") or ""
             match_num = m.get("match_index", 0) + 1
 
-            t1_name = _team_name(t1_id, team_map, winner_id)
-            t2_name = _team_name(t2_id, team_map, winner_id)
+            # Имена
+            t1_name = _get_team_name(t1_id, team_map, name_width)
+            t2_name = _get_team_name(t2_id, team_map, name_width)
 
-            # Обрезаем имена
-            t1_display = _clip(t1_name, max_name_len)
-            t2_display = _clip(t2_name, max_name_len)
+            # Статус
+            if status == "completed":
+                status_icon = "✅"
+            elif status == "playing":
+                status_icon = "⚔️"
+            else:
+                status_icon = "⏳"
 
-            emoji = _match_status_emoji(status)
+            # Маркеры победителя
+            t1_mark = " ★" if winner_id and winner_id == t1_id else "  "
+            t2_mark = " ★" if winner_id and winner_id == t2_id else "  "
 
-            # Если Bye (одна команда без соперника)
+            # Зачёркивание проигравших
+            if winner_id and winner_id != t1_id and t1_id:
+                t1_name = f"~~{t1_name}~~"
+            if winner_id and winner_id != t2_id and t2_id:
+                t2_name = f"~~{t2_name}~~"
+
+            score_str = f"  [{score}]" if score else ""
+
+            # Bye
             if t1_id and not t2_id:
-                t1_display = _clip(t1_name, max_name_len)
-                lines.append(f"  М{match_num:<2} {t1_display:<{max_name_len}}  (bye)  {emoji}")
+                lines.append(f"┌{'─' * (name_width + 4)}┐")
+                lines.append(f"│{t1_mark} {t1_name:<{name_width}}   │ ← bye")
+                lines.append(f"└{'─' * (name_width + 4)}┘  {status_icon}")
             elif not t1_id and t2_id:
-                t2_display = _clip(t2_name, max_name_len)
-                lines.append(f"  М{match_num:<2} {t2_display:<{max_name_len}}  (bye)  {emoji}")
+                lines.append(f"┌{'─' * (name_width + 4)}┐")
+                lines.append(f"│{t2_mark} {t2_name:<{name_width}}   │ ← bye")
+                lines.append(f"└{'─' * (name_width + 4)}┘  {status_icon}")
             else:
                 # Обычный матч
-                score_str = f"  {score}" if score else ""
-                lines.append(
-                    f"  М{match_num:<2} {t1_display:<{max_name_len}}  vs  "
-                    f"{t2_display:<{max_name_len}}  {emoji}{score_str}"
-                )
+                lines.append(f"┌{'─' * (name_width + 4)}┐  {label if m == round_matches[0] else ''}")
+                lines.append(f"│{t1_mark} {t1_name:<{name_width}}   │  {status_icon}{score_str}")
+                lines.append(f"│{t2_mark} {t2_name:<{name_width}}   │")
+                lines.append(f"└{'─' * (name_width + 4)}┘")
 
-        lines.append("")
+            # Разделитель между матчами
+            if m != round_matches[-1]:
+                lines.append("")
 
-    # --- Итог: чемпион ---
+        # Разделитель между раундами
+        if rnd < max_round:
+            lines.append("")
+            lines.append(f"{'─' * 30}")
+            lines.append("")
+
+    # Чемпион
     final_matches = rounds.get(max_round, [])
     if final_matches:
         fm = final_matches[0]
         if fm.get("winner_id") and fm["winner_id"] in team_map:
             champ = team_map[fm["winner_id"]]
-            lines.append(f"🏆 Чемпион: **{champ.get('name', '???')}**")
+            lines.append("")
+            lines.append(f"🏆 **Чемпион: {champ.get('name', '???')}**")
 
-    # Ограничиваем длину для Discord (embed description limit ~4096)
     text = "\n".join(lines)
     if len(text) > 3900:
-        text = text[:3890] + "\n..."
+        text = text[:3890] + "\n…"
 
     return text
 
 
+def _get_team_name(team_id: int, team_map: dict, max_len: int) -> str:
+    if not team_id:
+        return "TBD"
+    team = team_map.get(team_id)
+    if not team:
+        return "???"
+    return _clip(team.get("name", "???"), max_len)
+
+
 # ---------------------------------------------------------------------------
-# Простая сетка (превью — без матчей, только команды)
+# Визуальная сетка box-drawing (превью — без матчей, только посев)
 # ---------------------------------------------------------------------------
 
 def generate_bracket_simple(
@@ -203,23 +215,16 @@ def generate_bracket_simple(
     tournament_name: str = "Турнир",
     challonge_url: str = "",
 ) -> str:
-    """Превью сетки — показывает посев команд как в турнирной сетке."""
+    """
+    Превью сетки — визуальная расстановка команд по посеву
+    с Unicode box-drawing.
+    """
     if not teams:
         return f"🏆 {tournament_name}\n\nПока нет команд"
 
     approved = [t for t in teams if t.get("approved")]
     if not approved:
         return f"🏆 {tournament_name}\n\nНет одобренных команд"
-
-    lines: list[str] = []
-    lines.append(f"🏆 {tournament_name}")
-    lines.append("")
-
-    # Ссылка на Challonge (если есть)
-    if challonge_url:
-        full_url = challonge_url if challonge_url.startswith("http") else f"https://challonge.com/{challonge_url}"
-        lines.append(f"🔗 Полная сетка: {full_url}")
-        lines.append("")
 
     n = len(approved)
     bracket_size = 1
@@ -230,12 +235,12 @@ def generate_bracket_simple(
     first_round_matches = bracket_size // 2
     byes = bracket_size - n
 
-    # Seeding
+    # Стандартный посев
     seeded = list(approved)
     seeded = _standard_seed_order(seeded)
 
-    # Расставляем команды в матчи первого раунда
-    r1_matchups: list[tuple] = []  # (team1_or_None, team2_or_None)
+    # Расставляем команды в матчи
+    r1_matchups: list[tuple] = []
     team_idx = 0
     for i in range(first_round_matches):
         t1 = None
@@ -244,7 +249,7 @@ def generate_bracket_simple(
             if team_idx < n:
                 t1 = seeded[team_idx]
                 team_idx += 1
-            t2 = None  # Bye
+            t2 = None
         else:
             if team_idx < n:
                 t1 = seeded[team_idx]
@@ -254,50 +259,249 @@ def generate_bracket_simple(
                 team_idx += 1
         r1_matchups.append((t1, t2))
 
-    # --- Ширина ---
-    max_name_len = 14
+    # Ширина имён
+    name_width = 10
     for t in approved:
-        seed = t.get("seed", 0)
-        display = f"{seed}. {t['name']}" if seed and seed > 0 else t["name"]
-        max_name_len = max(max_name_len, len(display) + 2)
-    max_name_len = min(max_name_len, 28)
+        name_width = max(name_width, min(len(t.get("name", "")) + 1, 18))
 
-    # Выводим первый раунд
-    label = _round_label(num_rounds, 1)
-    lines.append(f"── {label} {'─' * max(1, 40 - len(label) - 4)}")
+    # Строим визуальную сетку
+    bracket_lines = _build_box_bracket(r1_matchups, num_rounds, name_width, bracket_size)
 
-    for idx, (t1, t2) in enumerate(r1_matchups):
-        match_num = idx + 1
-        if t1 and not t2:
-            name1 = _clip(t1.get("name", "???"), max_name_len)
-            lines.append(f"  М{match_num:<2} {name1:<{max_name_len}}  (bye)")
-        elif t1 and t2:
-            name1 = _clip(t1.get("name", "???"), max_name_len)
-            name2 = _clip(t2.get("name", "???"), max_name_len)
-            lines.append(f"  М{match_num:<2} {name1:<{max_name_len}}  vs  {name2:<{max_name_len}}")
-        elif t1:
-            name1 = _clip(t1.get("name", "???"), max_name_len)
-            lines.append(f"  М{match_num:<2} {name1:<{max_name_len}}  (bye)")
-
+    lines: list[str] = []
+    lines.append(f"🏆 **{tournament_name}**")
     lines.append("")
-
-    # Показываем структуру следующих раундов
-    for rnd in range(2, num_rounds + 1):
-        matches_in_round = bracket_size // (2 ** rnd)
-        label = _round_label(num_rounds, rnd)
-        lines.append(f"── {label} {'─' * max(1, 40 - len(label) - 4)}")
-        for idx in range(matches_in_round):
-            match_num = idx + 1
-            prev1 = idx * 2 + 1
-            prev2 = idx * 2 + 2
-            lines.append(f"  М{match_num:<2} Победитель М{prev1}  vs  Победитель М{prev2}")
-        lines.append("")
+    lines.append("```")
+    lines.extend(bracket_lines)
+    lines.append("```")
 
     text = "\n".join(lines)
     if len(text) > 3900:
-        text = text[:3890] + "\n..."
+        text = text[:3890] + "\n…"
 
     return text
+
+
+def _build_box_bracket(
+    r1_matchups: list[tuple],
+    num_rounds: int,
+    name_width: int,
+    bracket_size: int,
+) -> list[str]:
+    """
+    Строит визуальную сетку с Unicode box-drawing.
+
+    Каждая команда — коробка:
+      ┌─────────┐
+      │ Player1  │
+      └─────────┘
+
+    Пары соединяются через ─┤ и ├── к следующему раунду.
+    """
+    # Размеры
+    box_w = name_width + 2  # внутренняя ширина + padding
+    col_gap = 3             # горизонтальный зазор для соединений
+
+    # Структура: для каждого раунда вычисляем Y-позиции матчей
+    # Матч = 2 команды в коробках, высота = 3 строки (top, name, bottom)
+    # Между матчами в R1 — 0 строк (box bottom = box top для team2)
+    # Полный матч (2 команды) занимает 5 строк:
+    #   ┌───┐
+    #   │ T1 │
+    #   └───┘  <- bottom of T1 = top of T2 для пары
+    #   │ T2 │
+    #   └───┘
+    # Но мы рисуем их как:
+    #   ┌───┐
+    #   │ T1 │
+    #   ├───┤  <- средняя линия
+    #   │ T2 │
+    #   └───┘
+    # Высота = 5 строк на матч
+
+    match_height = 5  # строки на один матч (включая обе команды)
+    # В первом раунде: матч + gap
+    # В следующем: 2 матча сливаются → Y-центр между ними
+
+    # Рассчитываем Y-позиции для каждого матча в каждом раунде
+    # Y — верхняя строка матча (строка с ┌───┐)
+
+    round_match_positions: dict[int, list[int]] = {}  # rnd -> [y_top, ...]
+
+    # Раунд 1: матчи идут подряд с gap=1
+    y = 0
+    gap_r1 = 1
+    r1_positions = []
+    for i in range(len(r1_matchups)):
+        r1_positions.append(y)
+        y += match_height + gap_r1
+    round_match_positions[1] = r1_positions
+
+    # Последующие раунды: Y-центр = среднее Y-центров двух предыдущих матчей
+    for rnd in range(2, num_rounds + 1):
+        prev_positions = round_match_positions[rnd - 1]
+        curr_positions = []
+        for i in range(0, len(prev_positions), 2):
+            y1_center = prev_positions[i] + match_height // 2
+            y2_center = prev_positions[i + 1] + match_height // 2
+            y_center = (y1_center + y2_center) // 2
+            y_top = y_center - match_height // 2
+            curr_positions.append(y_top)
+        round_match_positions[rnd] = curr_positions
+
+    # Общая высота
+    if round_match_positions[1]:
+        total_height = round_match_positions[1][-1] + match_height
+    else:
+        total_height = match_height
+
+    # X-позиции для каждого раунда
+    round_x: dict[int, int] = {}
+    x = 0
+    for rnd in range(1, num_rounds + 1):
+        round_x[rnd] = x
+        x += box_w + 2 + col_gap  # +2 для границ ┌┐
+
+    total_width = x - col_gap
+
+    # Создаём сетку
+    grid: list[list[str]] = [[' '] * total_width for _ in range(total_height)]
+
+    def put(r: int, c: int, ch: str) -> None:
+        if 0 <= r < total_height and 0 <= c < total_width:
+            grid[r][c] = ch
+
+    def put_h(r: int, c_start: int, c_end: int) -> None:
+        for c in range(c_start, c_end + 1):
+            put(r, c, '─')
+
+    def put_text(r: int, c: int, text: str) -> None:
+        for i, ch in enumerate(text):
+            if c + i < total_width:
+                grid[r][c + i] = ch
+
+    def draw_match_box(y_top: int, x_left: int, name1: str, name2: str) -> None:
+        """Рисует коробку матча с двумя командами."""
+        # ┌───────┐
+        put(y_top, x_left, '┌')
+        put_h(y_top, x_left + 1, x_left + box_w)
+        put(y_top, x_left + box_w + 1, '┐')
+
+        # │ Name1  │
+        put(y_top + 1, x_left, '│')
+        n1 = f" {name1}".ljust(box_w)
+        put_text(y_top + 1, x_left + 1, n1)
+        put(y_top + 1, x_left + box_w + 1, '│')
+
+        # ├───────┤
+        put(y_top + 2, x_left, '├')
+        put_h(y_top + 2, x_left + 1, x_left + box_w)
+        put(y_top + 2, x_left + box_w + 1, '┤')
+
+        # │ Name2  │
+        put(y_top + 3, x_left, '│')
+        n2 = f" {name2}".ljust(box_w)
+        put_text(y_top + 3, x_left + 1, n2)
+        put(y_top + 3, x_left + box_w + 1, '│')
+
+        # └───────┘
+        put(y_top + 4, x_left, '└')
+        put_h(y_top + 4, x_left + 1, x_left + box_w)
+        put(y_top + 4, x_left + box_w + 1, '┘')
+
+    # --- Рисуем матчи первого раунда ---
+    for idx, (t1, t2) in enumerate(r1_matchups):
+        y_top = round_match_positions[1][idx]
+        x_left = round_x[1]
+
+        name1 = _clip(t1['name'] if t1 else "TBD", name_width)
+        name2 = _clip(t2['name'] if t2 else "BYE", name_width) if t2 else "BYE"
+
+        if t2 is None:
+            # Bye — только одна команда, маленькая коробка
+            # ┌───────┐
+            put(y_top, x_left, '┌')
+            put_h(y_top, x_left + 1, x_left + box_w)
+            put(y_top, x_left + box_w + 1, '┐')
+            # │ Name  │
+            put(y_top + 1, x_left, '│')
+            n1 = f" {name1}".ljust(box_w)
+            put_text(y_top + 1, x_left + 1, n1)
+            put(y_top + 1, x_left + box_w + 1, '│')
+            # └───────┘
+            put(y_top + 2, x_left, '└')
+            put_h(y_top + 2, x_left + 1, x_left + box_w)
+            put(y_top + 2, x_left + box_w + 1, '┘')
+        else:
+            draw_match_box(y_top, x_left, name1, name2)
+
+    # --- Рисуем последующие раунды и соединения ---
+    for rnd in range(2, num_rounds + 1):
+        prev_positions = round_match_positions[rnd - 1]
+        curr_positions = round_match_positions[rnd]
+        prev_x = round_x[rnd - 1]
+        curr_x = round_x[rnd]
+
+        matches_in_round = len(curr_positions)
+
+        for m_idx in range(matches_in_round):
+            y_top = curr_positions[m_idx]
+            x_left = curr_x
+
+            # Соединения от предыдущего раунда (рисуем ПЕРЕД коробкой, чтобы коробка перезаписала)
+            prev1_y = prev_positions[m_idx * 2]
+            prev2_y = prev_positions[m_idx * 2 + 1]
+
+            # Y-центры предыдущих матчей (средняя линия ├───┤)
+            prev1_center = prev1_y + match_height // 2
+            prev2_center = prev2_y + match_height // 2
+
+            # X: от правого края предыдущей коробки до левого края текущей
+            box_right_x = prev_x + box_w + 1  # позиция правой границы ┘
+            conn_x_start = box_right_x + 1     # первый свободный столбец после ┘
+            conn_x_end = curr_x - 1            # последний столбец перед ┌ текущей коробки
+
+            # Горизонтальные линии от правого края каждого матча
+            for cx in range(conn_x_start, conn_x_end + 1):
+                put(prev1_center, cx, '─')
+                put(prev2_center, cx, '─')
+
+            # Вертикальная соединительная линия (на последнем столбце перед текущей коробкой)
+            mid_x = conn_x_end
+            y_min = min(prev1_center, prev2_center)
+            y_max = max(prev1_center, prev2_center)
+
+            # Рисуем вертикальную линию
+            for ry in range(y_min, y_max + 1):
+                if ry == y_min and ry == y_max:
+                    put(ry, mid_x, '─')
+                elif ry == y_min:
+                    put(ry, mid_x, '├')
+                elif ry == y_max:
+                    put(ry, mid_x, '┤')
+                else:
+                    put(ry, mid_x, '│')
+
+            # Горизонтальная линия от соединения к текущему матчу
+            curr_center = y_top + match_height // 2
+            for cx in range(mid_x, curr_x):
+                put(curr_center, cx, '─')
+
+            # Теперь рисуем коробку TBD (поверх соединений)
+            draw_match_box(y_top, x_left, "TBD", "TBD")
+
+    # Добавляем подписи раундов
+    result_lines: list[str] = []
+
+    # Конвертируем сетку в строки
+    for row in grid:
+        line = ''.join(row).rstrip()
+        result_lines.append(line)
+
+    # Убираем лишние пустые строки в конце
+    while result_lines and not result_lines[-1].strip():
+        result_lines.pop()
+
+    return result_lines
 
 
 # ---------------------------------------------------------------------------
