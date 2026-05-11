@@ -37,6 +37,14 @@ class ChallongeClient:
             await self._session.close()
             self._session = None
 
+    async def verify_api_key(self) -> bool:
+        """Проверяет, действителен ли API-ключ. Возвращает True если ОК."""
+        try:
+            await self._request("GET", "/tournaments.json", params={"per_page": "1"})
+            return True
+        except ChallongeError:
+            return False
+
     # ------------------------------------------------------------------
     # Внутренние хелперы
     # ------------------------------------------------------------------
@@ -56,7 +64,25 @@ class ChallongeClient:
             async with session.request(
                 method, url, json=json_data, params=params,
             ) as resp:
-                body = await resp.json()
+                # Challonge при 401 возвращает HTML вместо JSON — обрабатываем отдельно
+                if resp.status == 401:
+                    text = await resp.text()
+                    logger.error("Challonge 401 Unauthorized. URL: %s. Response: %.200s", url, text)
+                    raise ChallongeError(
+                        "401 Unauthorized — неверный API-ключ Challonge. "
+                        "Проверьте CHALLONGE_API_KEY в переменных окружения."
+                    )
+
+                # Пробуем распарсить JSON
+                try:
+                    body = await resp.json()
+                except Exception:
+                    text = await resp.text()
+                    logger.error("Challonge: не JSON-ответ (%s). URL: %s. Body: %.200s", resp.content_type, url, text)
+                    raise ChallongeError(
+                        f"Сервер Challonge вернул не JSON (status={resp.status}). "
+                        f"Возможно, API-ключ неверен или URL неправильный."
+                    )
 
                 if resp.status >= 400:
                     error_msg = body.get("errors", [str(body)]) if isinstance(body, dict) else str(body)
@@ -65,6 +91,8 @@ class ChallongeClient:
 
                 return body  # type: ignore
 
+        except ChallongeError:
+            raise  # пробрасываем нашу ошибку как есть
         except aiohttp.ClientError as exc:
             logger.error("Challonge connection error: %s", exc)
             raise ChallongeError(f"Connection error: {exc}") from exc

@@ -168,7 +168,23 @@ async def main() -> None:
             "Установите переменную окружения CHALLONGE_API_KEY или добавьте ключ в config.json."
         )
     else:
-        logger.info("Challonge API ключ найден — интеграция включена.")
+        logger.info("Challonge API ключ найден — проверяем...")
+        from utils.challonge_api import ChallongeClient
+        test_client = ChallongeClient(config.CHALLONGE_API_KEY)
+        try:
+            valid = await test_client.verify_api_key()
+            if valid:
+                logger.info("✅ Challonge API ключ действителен — интеграция включена.")
+            else:
+                logger.error(
+                    "❌ Challonge API ключ НЕВЕРЕН! Сервер вернул 401. "
+                    "Проверьте ключ на https://challonge.com/settings/developer "
+                    "и обновите CHALLONGE_API_KEY в переменных окружения."
+                )
+        except Exception as e:
+            logger.error(f"❌ Ошибка проверки Challonge API ключа: {e}")
+        finally:
+            await test_client.close()
 
     async with TournamentBot() as bot:
         await bot.start(token)
