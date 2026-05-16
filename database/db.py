@@ -48,7 +48,8 @@ def init_tables(db: sqlite3.Connection):
             created_at REAL NOT NULL,
             expires_at REAL,
             is_emergency INTEGER NOT NULL DEFAULT 0,
-            creator_id TEXT NOT NULL
+            creator_id TEXT NOT NULL,
+            initial_participants TEXT NOT NULL DEFAULT ''
         );
 
         CREATE TABLE IF NOT EXISTS roll_results (
@@ -60,6 +61,11 @@ def init_tables(db: sqlite3.Connection):
             created_at REAL NOT NULL
         );
     """)
+    # Миграция: добавляем колонку initial_participants, если её нет
+    try:
+        db.execute("ALTER TABLE active_rolls ADD COLUMN initial_participants TEXT NOT NULL DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass  # Колонка уже существует
     db.commit()
 
 
@@ -146,12 +152,13 @@ def get_expired_inactive_statuses() -> list[dict]:
 
 # ============ ROLLS ============
 
-def create_roll(message_id: str, channel_id: str, guild_id: str, emoji: str, expires_at: float, is_emergency: bool, creator_id: str):
+def create_roll(message_id: str, channel_id: str, guild_id: str, emoji: str, expires_at: float, is_emergency: bool, creator_id: str, initial_participants: list[str] | None = None):
     import time
     db = get_db()
+    participants_str = ",".join(initial_participants) if initial_participants else ""
     db.execute(
-        "INSERT INTO active_rolls (message_id, channel_id, guild_id, emoji, created_at, expires_at, is_emergency, creator_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (message_id, channel_id, guild_id, emoji, time.time(), expires_at, int(is_emergency), creator_id)
+        "INSERT INTO active_rolls (message_id, channel_id, guild_id, emoji, created_at, expires_at, is_emergency, creator_id, initial_participants) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (message_id, channel_id, guild_id, emoji, time.time(), expires_at, int(is_emergency), creator_id, participants_str)
     )
     db.commit()
 

@@ -26,8 +26,12 @@ def parse_message_target(input_str: str):
     return None
 
 
-async def fetch_reactors(bot, channel_id: int, message_id: int, emoji: str):
-    """Получить участников, поставивших реакции на сообщение."""
+async def fetch_reactors(bot, channel_id: int, message_id: int, emoji: str, allowed_ids: set | None = None):
+    """Получить участников, поставивших реакции на сообщение.
+    
+    Если allowed_ids передан — вернуть только тех реаторов, чей ID есть в этом множестве
+    (т.е. тех, кто поставил реакцию ДО начала ролла).
+    """
     channel = bot.get_channel(channel_id)
     if not channel:
         try:
@@ -51,6 +55,9 @@ async def fetch_reactors(bot, channel_id: int, message_id: int, emoji: str):
                 if user.bot:
                     continue
                 uid = str(user.id)
+                # Фильтр: только те, кто был в начальном снимке
+                if allowed_ids is not None and uid not in allowed_ids:
+                    continue
                 if uid in participants:
                     participants[uid]["reactions"] += 1
                 else:
@@ -74,8 +81,12 @@ async def fetch_reactors(bot, channel_id: int, message_id: int, emoji: str):
         for user in users:
             if user.bot:
                 continue
-            participants[str(user.id)] = {
-                "id": str(user.id),
+            uid = str(user.id)
+            # Фильтр: только те, кто был в начальном снимке
+            if allowed_ids is not None and uid not in allowed_ids:
+                continue
+            participants[uid] = {
+                "id": uid,
                 "username": user.display_name,
                 "reactions": 1
             }
@@ -87,10 +98,14 @@ async def fetch_reactors(bot, channel_id: int, message_id: int, emoji: str):
     }
 
 
-async def perform_roll(bot, channel_id: int, message_id: str, emoji: str, reply_channel):
-    """Провести ролл и отправить результаты."""
+async def perform_roll(bot, channel_id: int, message_id: str, emoji: str, reply_channel, allowed_ids: set | None = None):
+    """Провести ролл и отправить результаты.
+    
+    allowed_ids — множество ID участников, поставивших реакцию ДО начала ролла.
+    Если None — фильтрация не применяется (экстренный ролл).
+    """
     try:
-        result = await fetch_reactors(bot, channel_id, int(message_id), emoji)
+        result = await fetch_reactors(bot, channel_id, int(message_id), emoji, allowed_ids)
 
         if not result:
             await reply_channel.send("❌ Не удалось найти сообщение или реакции.")
@@ -116,10 +131,6 @@ async def perform_roll(bot, channel_id: int, message_id: str, emoji: str, reply_
     except Exception as e:
         print(f"Ошибка при проведении ролла: {e}")
         remove_active_roll(message_id)
-
-
-async def setup(bot):
-    bot.tree.add_command(RollGroup(bot))
 
 
 class RollGroup(app_commands.Group):
@@ -153,7 +164,7 @@ class RollGroup(app_commands.Group):
         target_channel_id = int(target["channel_id"]) if target["channel_id"] else current_channel_id
         target_guild_id = target["guild_id"] or current_guild_id
 
-        # Проверяем существующее сообщение
+        # Проверяем существующее сообщение и получаем текущих реаторов
         pre_check = await fetch_reactors(self.bot, target_channel_id, int(target["message_id"]), emoji)
         if not pre_check:
             await interaction.followup.send(
@@ -170,8 +181,16 @@ class RollGroup(app_commands.Group):
             )
             return
 
+        # Снимок участников на момент старта ролла
+        initial_ids = [p["id"] for p in pre_check["participants"]]
+        initial_count = len(initial_ids)
+
         expires_at = time.time() + timeout
-        create_roll(target["message_id"], str(target_channel_id), target_guild_id, emoji, expires_at, False, str(interaction.user.id))
+        create_roll(
+            target["message_id"], str(target_channel_id), target_guild_id,
+            emoji, expires_at, False, str(interaction.user.id),
+            initial_participants=initial_ids
+        )
 
         timeout_min = timeout // 60
         timeout_sec = timeout % 60
@@ -184,7 +203,8 @@ class RollGroup(app_commands.Group):
                 f"Ролл среди тех, кто поставил реакцию **{'любую' if emoji == 'all' else emoji}** "
                 f"на [сообщение](https://discord.com/channels/{target_guild_id}/{target_channel_id}/{target['message_id']})\n\n"
                 f"⏱️ Время сбора: **{time_str}**\n"
-                f"👥 Уже участников: **{len(pre_check['participants'])}**\n\n"
+                f"👥 Уже участников: **{initial_count}**\n\n"
+                f"⚠️ Реакции, поставленные **после** запуска ролла, не учитываются!\n\n"
                 f"Ставьте реакции! Результаты будут подведены автоматически."
             ),
             timestamp=discord.utils.utcnow()
@@ -199,12 +219,14 @@ class RollGroup(app_commands.Group):
             await asyncio.sleep(timeout)
             roll = get_active_roll(target["message_id"])
             if roll:
+                # Восстанавливаем множество ID из снимка
+                allowed = set(roll["initial_participants"].split(",")) if roll["initial_participants"] else None
                 ch = self.bot.get_channel(current_channel_id) or await self.bot.fetch_channel(current_channel_id)
-                await perform_roll(self.bot, target_channel_id, target["message_id"], emoji, ch)
+                await perform_roll(self.bot, target_channel_id, target["message_id"], emoji, ch, allowed_ids=allowed)
 
         asyncio.create_task(delayed_roll())
 
-    @app_commands.command(name="reak_emergency", description="⚡ Аварийный ролл — мгновенный результат")
+    @app_commands.command(name="emergency", description="⚡ Аварийный ролл — мгновенный результат")
     @app_commands.describe(
         message="Ссылка на сообщение или ID сообщения",
         emoji="Эмодзи реакции (по умолчанию ✅, 'all' — все реакции)"
@@ -250,6 +272,7 @@ class RollGroup(app_commands.Group):
         await interaction.followup.send(embed=emergency_embed)
 
         remove_active_roll(target["message_id"])
+        # Экстренный ролл — без фильтра allowed_ids (мгновенный)
         await perform_roll(self.bot, target_channel_id, target["message_id"], emoji, interaction.channel)
 
     @app_commands.command(name="cancel", description="Отменить активный ролл")
