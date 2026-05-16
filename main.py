@@ -63,19 +63,6 @@ async def on_ready():
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="📋 AFK/Inactive"))
 
 
-@bot.event
-async def on_interaction(interaction: discord.Interaction):
-    if interaction.type == discord.InteractionType.application_command:
-        try:
-            await bot.tree.call(interaction)
-        except Exception as e:
-            print(f"Ошибка команды: {e}")
-            if not interaction.response.is_done():
-                await interaction.response.send_message("❌ Произошла ошибка.", ephemeral=True)
-            else:
-                await interaction.followup.send("❌ Произошла ошибка.", ephemeral=True)
-
-
 if __name__ == "__main__":
     if not config.DISCORD_TOKEN:
         print("❌ DISCORD_TOKEN не установлен! Проверьте .env или переменные окружения.")

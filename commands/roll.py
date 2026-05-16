@@ -1,6 +1,7 @@
 import re
 import random
 import asyncio
+import time
 import discord
 from discord import app_commands
 from database.db import (
@@ -39,7 +40,7 @@ async def fetch_reactors(bot, channel_id: int, message_id: int, emoji: str):
     except:
         return None
 
-    participants = {}  # user_id -> {id, username, reactions}
+    participants = {}
     total_reactions = 0
 
     if emoji == "all":
@@ -49,18 +50,19 @@ async def fetch_reactors(bot, channel_id: int, message_id: int, emoji: str):
             for user in users:
                 if user.bot:
                     continue
-                if str(user.id) in participants:
-                    participants[str(user.id)]["reactions"] += 1
+                uid = str(user.id)
+                if uid in participants:
+                    participants[uid]["reactions"] += 1
                 else:
-                    participants[str(user.id)] = {
-                        "id": str(user.id),
+                    participants[uid] = {
+                        "id": uid,
                         "username": user.display_name,
                         "reactions": 1
                     }
     else:
         reaction = None
         for r in message.reactions:
-            if str(r.emoji) == emoji or r.emoji.name == emoji:
+            if str(r.emoji) == emoji or (hasattr(r.emoji, 'name') and r.emoji.name == emoji):
                 reaction = r
                 break
 
@@ -104,9 +106,7 @@ async def perform_roll(bot, channel_id: int, message_id: str, emoji: str, reply_
             remove_active_roll(message_id)
             return
 
-        # Случайный победитель
         winner = random.choice(participants)
-
         save_roll_result(message_id, winner["id"], winner["username"], len(participants))
 
         embed = create_roll_result_embed(winner, participants, total_reactions)
@@ -134,12 +134,15 @@ class RollGroup(app_commands.Group):
         time_seconds="Время сбора реакций в секундах (по умолчанию 300)"
     )
     async def roll_reak(self, interaction: discord.Interaction, message: str, emoji: str = None, time_seconds: int = None):
+        # Defer — даёт 15 минут на ответ вместо 3 секунд
+        await interaction.response.defer()
+
         emoji = emoji or config.ROLL_EMOJI
         timeout = time_seconds or config.ROLL_COLLECT_TIMEOUT
 
         target = parse_message_target(message)
         if not target:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "❌ Неверный формат. Укажите ссылку на сообщение или ID сообщения.",
                 ephemeral=True
             )
@@ -153,26 +156,23 @@ class RollGroup(app_commands.Group):
         # Проверяем существующее сообщение
         pre_check = await fetch_reactors(self.bot, target_channel_id, int(target["message_id"]), emoji)
         if not pre_check:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "❌ Не удалось найти сообщение. Проверьте ссылку/ID и доступ бота к каналу.",
                 ephemeral=True
             )
             return
 
-        # Проверяем нет ли уже ролла
         existing = get_active_roll(target["message_id"])
         if existing:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "❌ На это сообщение уже запущен ролл!",
                 ephemeral=True
             )
             return
 
-        import time
         expires_at = time.time() + timeout
         create_roll(target["message_id"], str(target_channel_id), target_guild_id, emoji, expires_at, False, str(interaction.user.id))
 
-        # Подтверждение
         timeout_min = timeout // 60
         timeout_sec = timeout % 60
         time_str = f"{timeout_min} мин {timeout_sec} сек" if timeout_min > 0 else f"{timeout_sec} сек"
@@ -192,15 +192,15 @@ class RollGroup(app_commands.Group):
         confirm_embed.add_field(name="Организатор", value=f"<@{interaction.user.id}>", inline=True)
         confirm_embed.set_footer(text=f"ID сообщения: {target['message_id']}")
 
-        await interaction.response.send_message(embed=confirm_embed)
+        await interaction.followup.send(embed=confirm_embed)
 
         # Таймер
         async def delayed_roll():
             await asyncio.sleep(timeout)
             roll = get_active_roll(target["message_id"])
             if roll:
-                channel = self.bot.get_channel(current_channel_id) or await self.bot.fetch_channel(current_channel_id)
-                await perform_roll(self.bot, target_channel_id, target["message_id"], emoji, channel)
+                ch = self.bot.get_channel(current_channel_id) or await self.bot.fetch_channel(current_channel_id)
+                await perform_roll(self.bot, target_channel_id, target["message_id"], emoji, ch)
 
         asyncio.create_task(delayed_roll())
 
@@ -210,11 +210,13 @@ class RollGroup(app_commands.Group):
         emoji="Эмодзи реакции (по умолчанию ✅, 'all' — все реакции)"
     )
     async def roll_emergency(self, interaction: discord.Interaction, message: str, emoji: str = None):
+        await interaction.response.defer()
+
         emoji = emoji or config.ROLL_EMOJI
 
         target = parse_message_target(message)
         if not target:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "❌ Неверный формат. Укажите ссылку на сообщение или ID сообщения.",
                 ephemeral=True
             )
@@ -227,7 +229,7 @@ class RollGroup(app_commands.Group):
 
         pre_check = await fetch_reactors(self.bot, target_channel_id, int(target["message_id"]), emoji)
         if not pre_check:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "❌ Не удалось найти сообщение. Проверьте ссылку/ID и доступ бота к каналу.",
                 ephemeral=True
             )
@@ -245,7 +247,7 @@ class RollGroup(app_commands.Group):
             timestamp=discord.utils.utcnow()
         )
 
-        await interaction.response.send_message(embed=emergency_embed)
+        await interaction.followup.send(embed=emergency_embed)
 
         remove_active_roll(target["message_id"])
         await perform_roll(self.bot, target_channel_id, target["message_id"], emoji, interaction.channel)
@@ -262,7 +264,7 @@ class RollGroup(app_commands.Group):
         channel_rolls = [r for r in active_rolls if r["channel_id"] == current_channel_id]
         if not channel_rolls:
             roll_list = "\n".join(
-                f"• Сообщение <https://discord.com/channels/{r['guild_id']}/{r['channel_id']}/{r['message_id']}> — <@{r['creator_id']}>"
+                f"• <https://discord.com/channels/{r['guild_id']}/{r['channel_id']}/{r['message_id']}> — <@{r['creator_id']}>"
                 for r in active_rolls
             )
             await interaction.response.send_message(
