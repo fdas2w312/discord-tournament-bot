@@ -40,6 +40,56 @@ for (const cmd of commands) {
 client.once(Events.ClientReady, async () => {
   console.log(`[Bot] Logged in as ${client.user.tag}`);
 
+  // Очистка старых команд и регистрация новых
+  try {
+    const rest = new (require('discord.js').REST)({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+    const clientId = process.env.CLIENT_ID;
+    const guildId = process.env.GUILD_ID;
+
+    if (clientId && guildId) {
+      // Удалить ВСЕ существующие guild-команды (старые)
+      console.log('[Commands] Deleting old guild commands...');
+      await rest.put(
+        require('discord.js').Routes.applicationGuildCommands(clientId, guildId),
+        { body: [] }
+      );
+      console.log('[Commands] Old commands deleted.');
+
+      // Зарегистрировать новые команды
+      const commandData = commands.map(c => c.data.toJSON());
+      await rest.put(
+        require('discord.js').Routes.applicationGuildCommands(clientId, guildId),
+        { body: commandData }
+      );
+      console.log(`[Commands] Registered ${commandData.length} new commands.`);
+    } else {
+      console.warn('[Commands] CLIENT_ID or GUILD_ID not set, skipping command registration.');
+    }
+  } catch (err) {
+    console.error('[Commands] Error during command registration:', err);
+  }
+
+  // Удалить глобальные команды тоже (если были)
+  try {
+    const rest = new (require('discord.js').REST)({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+    const clientId = process.env.CLIENT_ID;
+    if (clientId) {
+      const globalCommands = await rest.get(
+        require('discord.js').Routes.applicationCommands(clientId)
+      );
+      if (globalCommands.length > 0) {
+        console.log(`[Commands] Found ${globalCommands.length} global commands, deleting...`);
+        await rest.put(
+          require('discord.js').Routes.applicationCommands(clientId),
+          { body: [] }
+        );
+        console.log('[Commands] Global commands deleted.');
+      }
+    }
+  } catch (err) {
+    console.error('[Commands] Error deleting global commands:', err);
+  }
+
   await connect();
 
   const scheduler = new Scheduler(client);
