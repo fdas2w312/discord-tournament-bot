@@ -98,10 +98,12 @@ class Scheduler {
       if (channel) {
         const message = await channel.messages.fetch(roll.messageId).catch(() => null);
         if (message) {
-          await message.edit({
+      const participantList = participants.map(p => p === winnerId ? `🏆 <@${p}>` : `<@${p}>`).join(', ');
+
+        await message.edit({
             embeds: [createEmbed({
               title: '🎉 Ролл завершён!',
-              description: `**Приз:** ${roll.prize}\n**Победитель:** <@${winnerId}>\n**Участников:** ${participants.length}\n**Тип:** ${roll.type === 'reak' ? 'По реакциям' : 'Обычный'}`,
+              description: `**Приз:** ${roll.prize}\n**Победитель:** <@${winnerId}>\n**Участников:** ${participants.length}\n**Тип:** ${roll.type === 'reak' ? 'По реакциям' : 'Обычный'}\n\n**Все участники:**\n${participantList}`,
               color: COLORS.SUCCESS
             })],
             components: []
@@ -111,7 +113,7 @@ class Scheduler {
         await channel.send({
           embeds: [createEmbed({
             title: '🎉 Новый победитель!',
-            description: `**Приз:** ${roll.prize}\n**Победитель:** <@${winnerId}>`,
+            description: `**Приз:** ${roll.prize}\n**Победитель:** <@${winnerId}>\n**Участников:** ${participants.length}\n\n**Все участники:**\n${participantList}`,
             color: COLORS.SUCCESS
           })]
         });

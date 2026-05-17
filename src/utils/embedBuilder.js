@@ -52,6 +52,20 @@ function formatDate(date) {
   return d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
+function getTimezoneOffset() {
+  const tz = process.env.TZ || 'UTC';
+  try {
+    const now = new Date();
+    const utcStr = now.toLocaleString('en-US', { timeZone: 'UTC' });
+    const tzStr = now.toLocaleString('en-US', { timeZone: tz });
+    const utcDate = new Date(utcStr);
+    const tzDate = new Date(tzStr);
+    return tzDate - utcDate; // offset in ms
+  } catch {
+    return 0;
+  }
+}
+
 function parseTimeInput(timeStr) {
   const match = timeStr.match(/^(\d{1,2}):(\d{2})$/);
   if (!match) return null;
@@ -59,13 +73,20 @@ function parseTimeInput(timeStr) {
   const minutes = parseInt(match[2], 10);
   if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
 
-  const now = new Date();
-  const target = new Date(now);
-  target.setHours(hours, minutes, 0, 0);
-  if (target <= now) {
-    target.setDate(target.getDate() + 1);
+  // Пользователь вводит время в СВОЁМ часовом поясе (TZ env, по умолчанию Europe/Moscow)
+  // Сервер на Railway работает в UTC, поэтому нужно вычесть offset
+  const offset = getTimezoneOffset();
+
+  const nowUTC = new Date();
+  const targetUTC = new Date(nowUTC);
+  targetUTC.setUTCHours(hours, minutes, 0, 0);
+  // offset > 0 значит TZ впереди UTC, значит 15:15 по Москве = 12:15 UTC
+  targetUTC.setTime(targetUTC.getTime() - offset);
+
+  if (targetUTC <= nowUTC) {
+    targetUTC.setDate(targetUTC.getDate() + 1);
   }
-  return target;
+  return targetUTC;
 }
 
 function parseDateRange(fromStr, toStr) {

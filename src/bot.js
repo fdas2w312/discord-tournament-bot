@@ -1,5 +1,8 @@
 require('dotenv').config();
 
+// Устанавливаем часовой пояс по умолчанию (Москва)
+if (!process.env.TZ) process.env.TZ = 'Europe/Moscow';
+
 const { Client, GatewayIntentBits, Partials, Events, Collection } = require('discord.js');
 const { connect } = require('./database/connection');
 const Scheduler = require('./utils/scheduler');

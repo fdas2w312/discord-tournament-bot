@@ -1,8 +1,16 @@
-const { ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, StringSelectMenuBuilder, UserSelectMenuBuilder, EmbedBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, StringSelectMenuBuilder, UserSelectMenuBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const Tournament = require('../models/Tournament');
 const Team = require('../models/Team');
 const Settings = require('../models/Settings');
 const { COLORS, createEmbed } = require('../utils/embedBuilder');
+
+// Helper: найти турнир по tournamentId (число) или _id
+async function findTournament(id) {
+  if (!isNaN(id)) {
+    return await Tournament.findOne({ tournamentId: parseInt(id) });
+  }
+  return await Tournament.findById(id);
+}
 
 module.exports = {
   async handleButton(interaction) {
@@ -20,11 +28,20 @@ module.exports = {
     if (customId.startsWith('tournament_select_members_')) {
       return handleMemberSelect(interaction, customId);
     }
-    if (customId.startsWith('tournament_approve_')) {
+    if (customId.startsWith('tournament_approve_btn_')) {
       return handleApproveTeam(interaction, customId);
     }
-    if (customId.startsWith('tournament_reject_')) {
+    if (customId.startsWith('tournament_reject_btn_')) {
       return handleRejectTeam(interaction, customId);
+    }
+    if (customId.startsWith('tournament_close_')) {
+      return handleCloseTournament(interaction, customId);
+    }
+    if (customId.startsWith('tournament_open_')) {
+      return handleOpenTournament(interaction, customId);
+    }
+    if (customId.startsWith('tournament_manage_teams_')) {
+      return handleManageTeamsList(interaction, customId);
     }
     if (customId.startsWith('tournament_start_')) {
       return handleStartTournament(interaction, customId);
@@ -43,42 +60,63 @@ module.exports = {
   async handleModal(interaction) {
     const customId = interaction.customId;
 
-    if (customId.startsWith('tournament_ask_modal_')) {
-      return handleAskModal(interaction, customId);
-    }
     if (customId.startsWith('tournament_team_modal_')) {
       return handleTeamModal(interaction, customId);
     }
   }
 };
 
+const TOURNEY_ERR = { embeds: [createEmbed({ title: 'Ошибка', description: 'Турнир не найден', color: COLORS.ERROR })], ephemeral: true };
+
 async function handleParticipate(interaction, customId) {
-  const tournamentId = customId.replace('tournament_participate_', '');
-  const tournament = await Tournament.findById(tournamentId);
-  if (!tournament) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Турнир не найден', color: COLORS.ERROR })], ephemeral: true });
-  }
+  const tid = customId.replace('tournament_participate_', '');
+  const tournament = await findTournament(tid);
+  if (!tournament) return interaction.reply(TOURNEY_ERR);
 
   if (tournament.status !== 'open') {
     return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Регистрация на турнир закрыта', color: COLORS.ERROR })], ephemeral: true });
   }
 
+  // 1x1 — один участник, без выбора
+  if (tournament.teamSize === 1) {
+    const allMembers = [interaction.user];
+
+    if (tournament.questionnaire && tournament.questionnaire.length > 0) {
+      const modal = new ModalBuilder()
+        .setCustomId(`tournament_team_modal_${tid}_${interaction.user.id}`)
+        .setTitle('Анкета участника');
+
+      tournament.questionnaire.forEach((q, i) => {
+        const input = new TextInputBuilder()
+          .setCustomId(`answer_${i}`)
+          .setLabel(q.label.substring(0, 45))
+          .setStyle(q.style === 'PARAGRAPH' ? TextInputStyle.Paragraph : TextInputStyle.Short)
+          .setRequired(q.required);
+        modal.addComponents(new ActionRowBuilder().addComponents(input));
+      });
+
+      return interaction.showModal(modal);
+    }
+
+    return registerTeam(tournament, allMembers, [], interaction);
+  }
+
+  // teamSize > 1 — выбираем участников
+  const maxSelect = Math.min(tournament.teamSize - 1, 25);
   const selectMenu = new UserSelectMenuBuilder()
-    .setCustomId(`tournament_select_members_${tournamentId}`)
+    .setCustomId(`tournament_select_members_${tid}`)
     .setPlaceholder('Выберите участников команды')
     .setMinValues(1)
-    .setMaxValues(tournament.teamSize - 1);
+    .setMaxValues(maxSelect);
 
   const row = new ActionRowBuilder().addComponents(selectMenu);
   return interaction.reply({ content: 'Выберите участников вашей команды:', components: [row], ephemeral: true });
 }
 
 async function handleMemberSelect(interaction, customId) {
-  const tournamentId = customId.replace('tournament_select_members_', '');
-  const tournament = await Tournament.findById(tournamentId);
-  if (!tournament) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Турнир не найден', color: COLORS.ERROR })], ephemeral: true });
-  }
+  const tid = customId.replace('tournament_select_members_', '');
+  const tournament = await findTournament(tid);
+  if (!tournament) return interaction.reply(TOURNEY_ERR);
 
   const selectedMembers = interaction.users;
   const allMembers = [interaction.user, ...selectedMembers.values()];
@@ -89,7 +127,7 @@ async function handleMemberSelect(interaction, customId) {
 
   if (tournament.questionnaire && tournament.questionnaire.length > 0) {
     const modal = new ModalBuilder()
-      .setCustomId(`tournament_team_modal_${tournamentId}_${allMembers.map(m => m.id).join(',')}`)
+      .setCustomId(`tournament_team_modal_${tid}_${allMembers.map(m => m.id).join(',')}`)
       .setTitle('Анкета команды');
 
     tournament.questionnaire.forEach((q, i) => {
@@ -108,26 +146,27 @@ async function handleMemberSelect(interaction, customId) {
 }
 
 async function handleTeamModal(interaction, customId) {
-  const parts = customId.replace('tournament_team_modal_', '').split('_');
-  const tournamentId = parts[0];
-  const memberIds = parts.slice(1).join(',').split(',');
+  const parts = customId.replace('tournament_team_modal_', '');
+  // Формат: tid_memberId1,memberId2,...
+  const underscoreIdx = parts.indexOf('_');
+  const tid = parts.substring(0, underscoreIdx);
+  const memberIdsStr = parts.substring(underscoreIdx + 1);
+  const memberIds = memberIdsStr ? memberIdsStr.split(',') : [];
 
-  const tournament = await Tournament.findById(tournamentId);
-  if (!tournament) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Турнир не найден', color: COLORS.ERROR })], ephemeral: true });
-  }
+  const tournament = await findTournament(tid);
+  if (!tournament) return interaction.reply(TOURNEY_ERR);
 
   const answers = [];
-  tournament.questionnaire.forEach((q, i) => {
-    const value = interaction.fields.getTextInputValue(`answer_${i}`);
-    if (value) {
-      answers.push({ label: q.label, value });
-    }
-  });
+  if (tournament.questionnaire) {
+    tournament.questionnaire.forEach((q, i) => {
+      const value = interaction.fields.getTextInputValue(`answer_${i}`);
+      if (value) answers.push({ label: q.label, value });
+    });
+  }
 
   const allMembers = [interaction.user];
   for (const id of memberIds) {
-    if (id !== interaction.user.id) {
+    if (id && id !== interaction.user.id) {
       try {
         const user = await interaction.client.users.fetch(id);
         allMembers.push(user);
@@ -154,7 +193,7 @@ async function registerTeam(tournament, members, answers, interaction) {
   const memberList = members.map(m => `<@${m.id}>`).join(', ');
   const embed = createEmbed({
     title: 'Заявка подана!',
-    description: `**Турнир:** ${tournament.name}\n**Участники:** ${memberList}\n**Статус:** Ожидает одобрения`,
+    description: `**Турнир:** #${tournament.tournamentId} ${tournament.name}\n**Участники:** ${memberList}\n**Статус:** Ожидает одобрения`,
     color: COLORS.SUCCESS
   });
 
@@ -171,11 +210,9 @@ async function registerTeam(tournament, members, answers, interaction) {
 }
 
 async function handleTeams(interaction, customId) {
-  const tournamentId = customId.replace('tournament_teams_', '');
-  const tournament = await Tournament.findById(tournamentId);
-  if (!tournament) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Турнир не найден', color: COLORS.ERROR })], ephemeral: true });
-  }
+  const tid = customId.replace('tournament_teams_', '');
+  const tournament = await findTournament(tid);
+  if (!tournament) return interaction.reply(TOURNEY_ERR);
 
   const teams = await Team.find({ tournamentId: tournament._id, status: { $in: ['pending', 'approved'] } });
 
@@ -190,7 +227,7 @@ async function handleTeams(interaction, customId) {
   }));
 
   const embed = createEmbed({
-    title: `📋 Команды — ${tournament.name}`,
+    title: `📋 Команды — #${tournament.tournamentId} ${tournament.name}`,
     description: `Всего: ${teams.length} команд`,
     color: COLORS.TOURNAMENT,
     fields: fields.slice(0, 25)
@@ -200,11 +237,9 @@ async function handleTeams(interaction, customId) {
 }
 
 async function handleManage(interaction, customId) {
-  const tournamentId = customId.replace('tournament_manage_', '');
-  const tournament = await Tournament.findById(tournamentId);
-  if (!tournament) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Турнир не найден', color: COLORS.ERROR })], ephemeral: true });
-  }
+  const tid = customId.replace('tournament_manage_', '');
+  const tournament = await findTournament(tid);
+  if (!tournament) return interaction.reply(TOURNEY_ERR);
 
   const settings = await Settings.findOne({ guildId: interaction.guild.id });
   const memberRoles = interaction.member.roles.cache.map(r => r.id);
@@ -219,68 +254,56 @@ async function handleManage(interaction, customId) {
   const pendingTeams = await Team.find({ tournamentId: tournament._id, status: 'pending' });
   const approvedTeams = await Team.find({ tournamentId: tournament._id, status: 'approved' });
 
-  const row1 = new ActionRowBuilder();
-  const row2 = new ActionRowBuilder();
+  const row1 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`tournament_approve_btn_${tid}`)
+      .setLabel(`Одобрить (${pendingTeams.length})`)
+      .setStyle(ButtonStyle.Success)
+      .setEmoji('✅'),
+    new ButtonBuilder()
+      .setCustomId(`tournament_reject_btn_${tid}`)
+      .setLabel(`Отклонить (${pendingTeams.length})`)
+      .setStyle(ButtonStyle.Danger)
+      .setEmoji('❌')
+  );
 
-  if (pendingTeams.length > 0) {
-    row1.addComponents(
-      new ButtonBuilder()
-        .setCustomId(`tournament_approve_${tournamentId}`)
-        .setLabel(`Одобрить (${pendingTeams.length})`)
-        .setStyle(ButtonStyle.Success),
-      new ButtonBuilder()
-        .setCustomId(`tournament_reject_${tournamentId}`)
-        .setLabel(`Удалить (${pendingTeams.length})`)
-        .setStyle(ButtonStyle.Danger)
-    );
-  }
+  const row2 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`tournament_close_${tid}`)
+      .setLabel('Закрыть турнир')
+      .setStyle(ButtonStyle.Secondary)
+      .setEmoji('🔒')
+      .setDisabled(tournament.status !== 'open'),
+    new ButtonBuilder()
+      .setCustomId(`tournament_open_${tid}`)
+      .setLabel('Открыть турнир')
+      .setStyle(ButtonStyle.Primary)
+      .setEmoji('🔓')
+      .setDisabled(tournament.status === 'open'),
+    new ButtonBuilder()
+      .setCustomId(`tournament_manage_teams_${tid}`)
+      .setLabel('Команды')
+      .setStyle(ButtonStyle.Primary)
+      .setEmoji('📋')
+  );
 
-  if (tournament.status === 'open' && approvedTeams.length > 0) {
-    row2.addComponents(
-      new ButtonBuilder()
-        .setCustomId(`tournament_start_${tournamentId}`)
-        .setLabel('Начать турнир')
-        .setStyle(ButtonStyle.Primary)
-        .setEmoji('▶️')
-    );
-  }
-
-  if (tournament.status === 'ongoing') {
-    row2.addComponents(
-      new ButtonBuilder()
-        .setCustomId(`tournament_end_${tournamentId}`)
-        .setLabel('Завершить турнир')
-        .setStyle(ButtonStyle.Danger)
-        .setEmoji('🏁')
-    );
-  }
-
-  if (tournament.status === 'ongoing' || tournament.status === 'completed') {
-    row2.addComponents(
-      new ButtonBuilder()
-        .setCustomId(`tournament_winners_${tournamentId}`)
-        .setLabel('Объявить победителей')
-        .setStyle(ButtonStyle.Success)
-        .setEmoji('🏆')
-    );
-  }
-
-  const components = [];
-  if (row1.components.length > 0) components.push(row1);
-  if (row2.components.length > 0) components.push(row2);
+  const statusText = tournament.status === 'open' ? '🟢 Открыт' : tournament.status === 'ongoing' ? '🟡 Идёт' : '🔴 Закрыт';
 
   const embed = createEmbed({
-    title: `⚙️ Управление — ${tournament.name}`,
-    description: `Статус: ${tournament.status}\nОжидают одобрения: ${pendingTeams.length}\nОдобрено: ${approvedTeams.length}`,
+    title: `⚙️ Управление — #${tournament.tournamentId} ${tournament.name}`,
+    description: `Статус: ${statusText}\nОжидают одобрения: ${pendingTeams.length}\nОдобрено: ${approvedTeams.length}`,
     color: COLORS.TOURNAMENT
   });
 
-  return interaction.reply({ embeds: [embed], components, ephemeral: true });
+  return interaction.reply({ embeds: [embed], components: [row1, row2], ephemeral: true });
 }
 
 async function handleApproveTeam(interaction, customId) {
-  const tournamentId = customId.replace('tournament_approve_', '');
-  const pendingTeams = await Team.find({ tournamentId, status: 'pending' });
+  const tid = customId.replace('tournament_approve_btn_', '');
+  const tournament = await findTournament(tid);
+  if (!tournament) return interaction.reply(TOURNEY_ERR);
+
+  const pendingTeams = await Team.find({ tournamentId: tournament._id, status: 'pending' });
 
   if (pendingTeams.length === 0) {
     return interaction.reply({ embeds: [createEmbed({ title: 'Нет команд', description: 'Нет команд, ожидающих одобрения', color: COLORS.INFO })], ephemeral: true });
@@ -293,7 +316,7 @@ async function handleApproveTeam(interaction, customId) {
   }));
 
   const select = new StringSelectMenuBuilder()
-    .setCustomId(`approve_select_${tournamentId}`)
+    .setCustomId(`approve_select_${tid}`)
     .setPlaceholder('Выберите команды для одобрения')
     .setMinValues(1)
     .setMaxValues(options.length)
@@ -304,11 +327,14 @@ async function handleApproveTeam(interaction, customId) {
 }
 
 async function handleRejectTeam(interaction, customId) {
-  const tournamentId = customId.replace('tournament_reject_', '');
-  const pendingTeams = await Team.find({ tournamentId, status: 'pending' });
+  const tid = customId.replace('tournament_reject_btn_', '');
+  const tournament = await findTournament(tid);
+  if (!tournament) return interaction.reply(TOURNEY_ERR);
+
+  const pendingTeams = await Team.find({ tournamentId: tournament._id, status: 'pending' });
 
   if (pendingTeams.length === 0) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Нет команд', description: 'Нет команд, ожидающих удаления', color: COLORS.INFO })], ephemeral: true });
+    return interaction.reply({ embeds: [createEmbed({ title: 'Нет команд', description: 'Нет команд, ожидающих отклонения', color: COLORS.INFO })], ephemeral: true });
   }
 
   const options = pendingTeams.slice(0, 25).map(t => ({
@@ -318,61 +344,114 @@ async function handleRejectTeam(interaction, customId) {
   }));
 
   const select = new StringSelectMenuBuilder()
-    .setCustomId(`reject_select_${tournamentId}`)
-    .setPlaceholder('Выберите команды для удаления')
+    .setCustomId(`reject_select_${tid}`)
+    .setPlaceholder('Выберите команды для отклонения')
     .setMinValues(1)
     .setMaxValues(options.length)
     .addOptions(options);
 
   const row = new ActionRowBuilder().addComponents(select);
-  return interaction.reply({ content: 'Выберите команды для удаления:', components: [row], ephemeral: true });
+  return interaction.reply({ content: 'Выберите команды для отклонения:', components: [row], ephemeral: true });
 }
 
-async function handleStartTournament(interaction, customId) {
-  const tournamentId = customId.replace('tournament_start_', '');
-  const tournament = await Tournament.findById(tournamentId);
-
-  if (!tournament) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Турнир не найден', color: COLORS.ERROR })], ephemeral: true });
-  }
+async function handleCloseTournament(interaction, customId) {
+  const tid = customId.replace('tournament_close_', '');
+  const tournament = await findTournament(tid);
+  if (!tournament) return interaction.reply(TOURNEY_ERR);
 
   tournament.status = 'ongoing';
   await tournament.save();
 
-  const approvedTeams = await Team.find({ tournamentId, status: 'approved' });
+  return interaction.reply({ embeds: [createEmbed({
+    title: `🔒 Турнир #${tournament.tournamentId} "${tournament.name}" закрыт`,
+    description: 'Регистрация закрыта. Новые команды не могут подать заявку.',
+    color: COLORS.WARNING
+  })], ephemeral: true });
+}
+
+async function handleOpenTournament(interaction, customId) {
+  const tid = customId.replace('tournament_open_', '');
+  const tournament = await findTournament(tid);
+  if (!tournament) return interaction.reply(TOURNEY_ERR);
+
+  tournament.status = 'open';
+  await tournament.save();
+
+  return interaction.reply({ embeds: [createEmbed({
+    title: `🔓 Турнир #${tournament.tournamentId} "${tournament.name}" открыт`,
+    description: 'Регистрация открыта. Новые команды могут подать заявку.',
+    color: COLORS.SUCCESS
+  })], ephemeral: true });
+}
+
+async function handleManageTeamsList(interaction, customId) {
+  const tid = customId.replace('tournament_manage_teams_', '');
+  const tournament = await findTournament(tid);
+  if (!tournament) return interaction.reply(TOURNEY_ERR);
+
+  const allTeams = await Team.find({ tournamentId: tournament._id });
+
+  if (allTeams.length === 0) {
+    return interaction.reply({ embeds: [createEmbed({ title: 'Команды', description: 'Нет команд', color: COLORS.INFO })], ephemeral: true });
+  }
+
+  const statusEmoji = { pending: '⏳', approved: '✅', rejected: '❌', eliminated: '❌' };
+  const statusTextMap = { pending: 'Ожидает', approved: 'Одобрена', rejected: 'Отклонена', eliminated: 'Выбыла' };
+
+  const fields = allTeams.map((team, i) => ({
+    name: `${i + 1}. ${team.name} ${statusEmoji[team.status] || '❓'}`,
+    value: `Капитан: <@${team.captainId}>\nУчастники: ${team.members.map(m => `<@${m}>`).join(', ')}\nСтатус: ${statusTextMap[team.status] || team.status}`,
+    inline: false
+  }));
 
   const embed = createEmbed({
-    title: `▶️ Турнир "${tournament.name}" начался!`,
-    description: `Формат: ${tournament.teamSize}x${tournament.teamSize}\nУчаствующих команд: ${approvedTeams.length}`,
-    color: COLORS.SUCCESS
+    title: `📋 Все команды — #${tournament.tournamentId} ${tournament.name}`,
+    description: `Всего: ${allTeams.length}`,
+    color: COLORS.TOURNAMENT,
+    fields: fields.slice(0, 25)
   });
 
-  return interaction.reply({ embeds: [embed] });
+  return interaction.reply({ embeds: [embed], ephemeral: true });
+}
+
+async function handleStartTournament(interaction, customId) {
+  const tid = customId.replace('tournament_start_', '');
+  const tournament = await findTournament(tid);
+  if (!tournament) return interaction.reply(TOURNEY_ERR);
+
+  tournament.status = 'ongoing';
+  await tournament.save();
+
+  const approvedTeams = await Team.find({ tournamentId: tournament._id, status: 'approved' });
+
+  return interaction.reply({ embeds: [createEmbed({
+    title: `▶️ Турнир #${tournament.tournamentId} "${tournament.name}" начался!`,
+    description: `Формат: ${tournament.teamSize}x${tournament.teamSize}\nУчаствующих команд: ${approvedTeams.length}`,
+    color: COLORS.SUCCESS
+  })] });
 }
 
 async function handleEndTournament(interaction, customId) {
-  const tournamentId = customId.replace('tournament_end_', '');
-  const tournament = await Tournament.findById(tournamentId);
-
-  if (!tournament) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Турнир не найден', color: COLORS.ERROR })], ephemeral: true });
-  }
+  const tid = customId.replace('tournament_end_', '');
+  const tournament = await findTournament(tid);
+  if (!tournament) return interaction.reply(TOURNEY_ERR);
 
   tournament.status = 'completed';
   await tournament.save();
 
-  const embed = createEmbed({
-    title: `🏁 Турнир "${tournament.name}" завершён!`,
+  return interaction.reply({ embeds: [createEmbed({
+    title: `🏁 Турнир #${tournament.tournamentId} "${tournament.name}" завершён!`,
     description: 'Объявите победителей через кнопку "Объявить победителей"',
     color: COLORS.WARNING
-  });
-
-  return interaction.reply({ embeds: [embed] });
+  })] });
 }
 
 async function handleWinnersSelect(interaction, customId) {
-  const tournamentId = customId.replace('tournament_winners_', '');
-  const approvedTeams = await Team.find({ tournamentId, status: { $in: ['approved', 'eliminated'] } });
+  const tid = customId.replace('tournament_winners_', '');
+  const tournament = await findTournament(tid);
+  if (!tournament) return interaction.reply(TOURNEY_ERR);
+
+  const approvedTeams = await Team.find({ tournamentId: tournament._id, status: { $in: ['approved', 'eliminated'] } });
 
   if (approvedTeams.length === 0) {
     return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Нет команд для выбора победителя', color: COLORS.ERROR })], ephemeral: true });
@@ -385,7 +464,7 @@ async function handleWinnersSelect(interaction, customId) {
   }));
 
   const select = new StringSelectMenuBuilder()
-    .setCustomId(`winner_select_${tournamentId}`)
+    .setCustomId(`winner_select_${tid}`)
     .setPlaceholder('Выберите команду-победителя')
     .setMinValues(1)
     .setMaxValues(1)
@@ -412,41 +491,4 @@ async function handleRollJoin(interaction, customId) {
   await roll.save();
 
   return interaction.reply({ embeds: [createEmbed({ title: 'Вы участвуете!', description: `Ролл: ${roll.prize}\nУчастников: ${roll.participants.length}`, color: COLORS.SUCCESS })], ephemeral: true });
-}
-
-async function handleAskModal(interaction, customId) {
-  const tournamentId = customId.replace('tournament_ask_modal_', '');
-  const tournament = await Tournament.findById(tournamentId);
-
-  if (!tournament) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Турнир не найден', color: COLORS.ERROR })], ephemeral: true });
-  }
-
-  const questions = [];
-  for (let i = 0; i < 5; i++) {
-    const value = interaction.fields.getTextInputValue(`question_${i}`);
-    if (value && value.trim()) {
-      questions.push({
-        label: value.trim(),
-        style: 'SHORT',
-        required: true
-      });
-    }
-  }
-
-  if (questions.length === 0) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Добавьте хотя бы один вопрос', color: COLORS.ERROR })], ephemeral: true });
-  }
-
-  tournament.questionnaire = questions;
-  await tournament.save();
-
-  const embed = createEmbed({
-    title: 'Анкета создана!',
-    description: `**Турнир:** ${tournament.name}\n**Вопросов:** ${questions.length}`,
-    fields: questions.map((q, i) => ({ name: `${i + 1}. ${q.label}`, value: `Стиль: ${q.style}`, inline: false })),
-    color: COLORS.SUCCESS
-  });
-
-  return interaction.reply({ embeds: [embed] });
 }

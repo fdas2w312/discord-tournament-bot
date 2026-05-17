@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, StringSelectMenuBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, ChannelType, PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, PermissionFlagsBits } = require('discord.js');
 const Tournament = require('../models/Tournament');
 const Team = require('../models/Team');
 const Settings = require('../models/Settings');
@@ -43,19 +43,30 @@ module.exports = {
     )
     .addSubcommand(sub =>
       sub.setName('ask')
-        .setDescription('Создать анкету для турнира')
+        .setDescription('Добавить вопрос в анкету турнира')
         .addStringOption(opt =>
           opt.setName('турнир')
             .setDescription('Название турнира')
             .setRequired(true)
             .setAutocomplete(true))
+        .addStringOption(opt =>
+          opt.setName('вопрос')
+            .setDescription('Текст вопроса')
+            .setRequired(true))
+        .addStringOption(opt =>
+          opt.setName('стиль')
+            .setDescription('Стиль ответа')
+            .addChoices(
+              { name: 'Короткий', value: 'SHORT' },
+              { name: 'Длинный', value: 'PARAGRAPH' }
+            ))
     )
     .addSubcommand(sub =>
       sub.setName('settings')
         .setDescription('Настройки ролей для турниров')
         .addRoleOption(opt =>
           opt.setName('админ_роль')
-            .setDescription('Роль администрации турнира'))
+            .setDescription('Добавить роль администрации турнира'))
         .addRoleOption(opt =>
           opt.setName('участник_роль')
             .setDescription('Роль участников турнира'))
@@ -80,10 +91,13 @@ module.exports = {
     const focused = interaction.options.getFocused();
     const tournaments = await Tournament.find({
       guildId: interaction.guild.id,
-      name: { $regex: focused, $options: 'i' }
+      $or: [
+        { name: { $regex: focused, $options: 'i' } },
+        { tournamentId: !isNaN(focused) ? parseInt(focused) : -1 }
+      ]
     }).limit(25);
     return interaction.respond(
-      tournaments.map(t => ({ name: t.name, value: t.name }))
+      tournaments.map(t => ({ name: `#${t.tournamentId} — ${t.name}`, value: t.tournamentId.toString() }))
     );
   }
 };
@@ -131,7 +145,7 @@ async function handleCreate(interaction) {
     description: `**${name}** — формат ${teamSize}x${teamSize}`,
     color: COLORS.SUCCESS,
     fields: [
-      { name: 'ID', value: tournament._id.toString(), inline: true },
+      { name: 'ID', value: `#${tournament.tournamentId}`, inline: true },
       { name: 'Статус', value: 'Открыт для регистрации', inline: true },
       { name: 'Размер команды', value: `${teamSize} игрок(ов)`, inline: true }
     ]
@@ -141,35 +155,43 @@ async function handleCreate(interaction) {
 }
 
 async function handlePanel(interaction) {
-  const name = interaction.options.getString('турнир');
-  const tournament = await Tournament.findOne({ guildId: interaction.guild.id, name, status: { $ne: 'completed' } });
+  const tournamentInput = interaction.options.getString('турнир');
+  // Попробуем найти по tournamentId (число) или по названию
+  let tournament;
+  if (!isNaN(tournamentInput)) {
+    tournament = await Tournament.findOne({ guildId: interaction.guild.id, tournamentId: parseInt(tournamentInput), status: { $ne: 'completed' } });
+  }
+  if (!tournament) {
+    tournament = await Tournament.findOne({ guildId: interaction.guild.id, name: tournamentInput, status: { $ne: 'completed' } });
+  }
 
   if (!tournament) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: `Турнир "${name}" не найден`, color: COLORS.ERROR })], ephemeral: true });
+    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: `Турнир не найден`, color: COLORS.ERROR })], ephemeral: true });
   }
 
   const teamCount = await Team.countDocuments({ tournamentId: tournament._id, status: { $in: ['pending', 'approved'] } });
 
   const embed = createEmbed({
-    title: `Турнир: ${tournament.name}`,
+    title: `Турнир #${tournament.tournamentId}: ${tournament.name}`,
     description: `Формат: ${tournament.teamSize}x${tournament.teamSize}\nСтатус: ${tournament.status === 'open' ? '🟢 Открыт' : tournament.status === 'ongoing' ? '🟡 Идёт' : '🔴 Завершён'}\nЗарегистрировано команд: ${teamCount}`,
     color: COLORS.TOURNAMENT,
     footer: 'Нажмите кнопку ниже для действий'
   });
 
+  const tid = tournament.tournamentId;
   const row1 = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
-      .setCustomId(`tournament_participate_${tournament._id}`)
+      .setCustomId(`tournament_participate_${tid}`)
       .setLabel('Участвовать')
       .setStyle(ButtonStyle.Success)
       .setEmoji('🎮'),
     new ButtonBuilder()
-      .setCustomId(`tournament_teams_${tournament._id}`)
+      .setCustomId(`tournament_teams_${tid}`)
       .setLabel('Команды')
       .setStyle(ButtonStyle.Primary)
       .setEmoji('📋'),
     new ButtonBuilder()
-      .setCustomId(`tournament_manage_${tournament._id}`)
+      .setCustomId(`tournament_manage_${tid}`)
       .setLabel('Управление')
       .setStyle(ButtonStyle.Danger)
       .setEmoji('⚙️')
@@ -178,12 +200,22 @@ async function handlePanel(interaction) {
   return interaction.reply({ embeds: [embed], components: [row1] });
 }
 
+// Неограниченное количество вопросов — добавляем по одному через команду
 async function handleAsk(interaction) {
-  const name = interaction.options.getString('турнир');
-  const tournament = await Tournament.findOne({ guildId: interaction.guild.id, name, status: { $ne: 'completed' } });
+  const tournamentInput = interaction.options.getString('турнир');
+  const question = interaction.options.getString('вопрос');
+  const style = interaction.options.getString('стиль') || 'SHORT';
+
+  let tournament;
+  if (!isNaN(tournamentInput)) {
+    tournament = await Tournament.findOne({ guildId: interaction.guild.id, tournamentId: parseInt(tournamentInput), status: { $ne: 'completed' } });
+  }
+  if (!tournament) {
+    tournament = await Tournament.findOne({ guildId: interaction.guild.id, name: tournamentInput, status: { $ne: 'completed' } });
+  }
 
   if (!tournament) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: `Турнир "${name}" не найден`, color: COLORS.ERROR })], ephemeral: true });
+    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: `Турнир не найден`, color: COLORS.ERROR })], ephemeral: true });
   }
 
   const settings = await Settings.findOne({ guildId: interaction.guild.id });
@@ -195,21 +227,24 @@ async function handleAsk(interaction) {
     }
   }
 
-  const modal = new ModalBuilder()
-    .setCustomId(`tournament_ask_modal_${tournament._id}`)
-    .setTitle(`Анкета для "${tournament.name}"`);
+  if (!tournament.questionnaire) tournament.questionnaire = [];
+  tournament.questionnaire.push({
+    label: question,
+    style,
+    required: true
+  });
+  await tournament.save();
 
-  for (let i = 0; i < 5; i++) {
-    const input = new TextInputBuilder()
-      .setCustomId(`question_${i}`)
-      .setLabel(`Вопрос ${i + 1} (оставьте пустым если не нужен)`)
-      .setStyle(TextInputStyle.Short)
-      .setRequired(false)
-      .setPlaceholder('Введите текст вопроса...');
-    modal.addComponents(new ActionRowBuilder().addComponents(input));
-  }
+  const questionList = tournament.questionnaire.map((q, i) => `${i + 1}. ${q.label} (${q.style === 'PARAGRAPH' ? 'Длинный' : 'Короткий'})`).join('\n');
 
-  return interaction.showModal(modal);
+  const embed = createEmbed({
+    title: 'Вопрос добавлен!',
+    description: `**Турнир:** ${tournament.name}\n**Всего вопросов:** ${tournament.questionnaire.length}\n\n${questionList}`,
+    color: COLORS.SUCCESS,
+    footer: 'Используйте /tournament ask чтобы добавить ещё вопросы'
+  });
+
+  return interaction.reply({ embeds: [embed] });
 }
 
 async function handleSettings(interaction) {
@@ -226,7 +261,7 @@ async function handleSettings(interaction) {
     if (!settings.tournamentAdminRoles.includes(adminRole.id)) {
       settings.tournamentAdminRoles.push(adminRole.id);
     }
-    updates.push(`Админ-роль: ${adminRole.name}`);
+    updates.push(`Админ-роль добавлена: ${adminRole.name}`);
   }
   if (participantRole) {
     settings.tournamentParticipantRole = participantRole.id;

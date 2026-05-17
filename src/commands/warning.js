@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, PermissionFlagsBits, StringSelectMenuBuilder, ActionRowBuilder, RoleSelectMenuBuilder } = require('discord.js');
+const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const Warning = require('../models/Warning');
 const Settings = require('../models/Settings');
 const { COLORS, createEmbed } = require('../utils/embedBuilder');
@@ -39,13 +39,10 @@ module.exports = {
     )
     .addSubcommand(sub =>
       sub.setName('set')
-        .setDescription('Настроить роли для системы штрафов')
+        .setDescription('Настроить систему штрафов')
         .addRoleOption(opt =>
           opt.setName('админ_роль')
-            .setDescription('Роль, которая может выдавать штрафы'))
-        .addRoleOption(opt =>
-          opt.setName('роль_наказуемых')
-            .setDescription('Роль людей, которым могут выдаваться штрафы'))
+            .setDescription('Добавить роль, которая может выдавать штрафы'))
         .addStringOption(opt =>
           opt.setName('название_штрафа')
             .setDescription('Название нового типа штрафа'))
@@ -134,14 +131,6 @@ async function handleAdd(interaction) {
     return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Пользователь не найден на сервере', color: COLORS.ERROR })], ephemeral: true });
   }
 
-  if (settings?.warningTargetRoles?.length) {
-    const memberRoles = member.roles.cache.map(r => r.id);
-    const isTarget = settings.warningTargetRoles.some(r => memberRoles.includes(r));
-    if (!isTarget) {
-      return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Этот пользователь не может получать штрафы (нет нужной роли)', color: COLORS.ERROR })], ephemeral: true });
-    }
-  }
-
   await member.roles.add(penalty.roleId).catch(() => {});
 
   const warning = await Warning.create({
@@ -204,7 +193,6 @@ async function handleDelete(interaction) {
 
 async function handleSet(interaction) {
   const adminRole = interaction.options.getRole('админ_роль');
-  const targetRole = interaction.options.getRole('роль_наказуемых');
   const penaltyName = interaction.options.getString('название_штрафа');
   const penaltyRole = interaction.options.getRole('роль_штрафа');
 
@@ -219,14 +207,7 @@ async function handleSet(interaction) {
     if (!settings.warningAdminRoles.includes(adminRole.id)) {
       settings.warningAdminRoles.push(adminRole.id);
     }
-    updates.push(`Админ-роль штрафов: ${adminRole.name}`);
-  }
-
-  if (targetRole) {
-    if (!settings.warningTargetRoles.includes(targetRole.id)) {
-      settings.warningTargetRoles.push(targetRole.id);
-    }
-    updates.push(`Роль наказуемых: ${targetRole.name}`);
+    updates.push(`Админ-роль добавлена: ${adminRole.name}`);
   }
 
   if (penaltyName && penaltyRole) {
@@ -245,9 +226,6 @@ async function handleSet(interaction) {
     const currentAdmins = settings.warningAdminRoles.length
       ? settings.warningAdminRoles.map(r => `<@&${r}>`).join(', ')
       : 'Не заданы';
-    const currentTargets = settings.warningTargetRoles.length
-      ? settings.warningTargetRoles.map(r => `<@&${r}>`).join(', ')
-      : 'Не заданы';
     const currentPenalties = settings.warningPenalties.length
       ? settings.warningPenalties.map(p => `${p.name} → <@&${p.roleId}>`).join('\n')
       : 'Не заданы';
@@ -255,7 +233,7 @@ async function handleSet(interaction) {
     return interaction.reply({
       embeds: [createEmbed({
         title: 'Настройки штрафов',
-        description: `**Админ-роли:** ${currentAdmins}\n**Роли наказуемых:** ${currentTargets}\n**Штрафы:**\n${currentPenalties}`,
+        description: `**Админ-роли:** ${currentAdmins}\n**Штрафы:**\n${currentPenalties}`,
         color: COLORS.INFO
       })],
       ephemeral: true

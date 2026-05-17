@@ -285,9 +285,11 @@ async function executeRoll(roll, client, interaction) {
   roll.status = 'completed';
   await roll.save();
 
+  const participantList = participants.map(p => p === winnerId ? `🏆 <@${p}>` : `<@${p}>`).join(', ');
+
   const embed = createEmbed({
     title: '🎉 Ролл завершён!',
-    description: `**Приз:** ${roll.prize}\n**Победитель:** <@${winnerId}>\n**Участников:** ${participants.length}\n**Тип:** ${roll.type === 'reak' ? 'По реакциям' : 'Обычный'}`,
+    description: `**Приз:** ${roll.prize}\n**Победитель:** <@${winnerId}>\n**Участников:** ${participants.length}\n**Тип:** ${roll.type === 'reak' ? 'По реакциям' : 'Обычный'}\n\n**Все участники:**\n${participantList}`,
     color: COLORS.SUCCESS
   });
 
