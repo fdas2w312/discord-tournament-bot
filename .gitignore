@@ -1,6 +1,3 @@
 node_modules/
-__pycache__/
-*.pyc
-database/bot.db
 .env
 *.log
