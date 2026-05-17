@@ -7,7 +7,8 @@ const commands = [
   require('./commands/roll'),
   require('./commands/afk'),
   require('./commands/inactive'),
-  require('./commands/status')
+  require('./commands/status'),
+  require('./commands/message')
 ];
 
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);

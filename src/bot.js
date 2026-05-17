@@ -13,7 +13,8 @@ const commands = [
   require('./commands/roll'),
   require('./commands/afk'),
   require('./commands/inactive'),
-  require('./commands/status')
+  require('./commands/status'),
+  require('./commands/message')
 ];
 
 const interactionHandler = require('./handlers/interactions');
