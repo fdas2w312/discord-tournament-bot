@@ -31,6 +31,15 @@ async def on_ready():
     from commands.status import StatusCommand
     from commands.roll import RollGroup
 
+    # Очистка старых глобальных команд (убираем «призраки» типа /warning)
+    try:
+        bot.tree.clear_commands(guild=None)
+        await bot.tree.sync(guild=None)
+        print("🧹 Глобальные команды очищены")
+    except Exception as e:
+        print(f"⚠️ Ошибка очистки глобальных команд: {e}")
+
+    # Очистка и регистрация гильд-команд
     bot.tree.clear_commands(guild=guild)
 
     # AFK
