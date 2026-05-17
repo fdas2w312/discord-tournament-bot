@@ -1,4 +1,4 @@
-const { SlashCommandBuilder } = require('discord.js');
+const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const Inactive = require('../models/Inactive');
 const { COLORS, createEmbed, formatDate } = require('../utils/embedBuilder');
 
@@ -53,11 +53,11 @@ async function handleOn(interaction) {
   const endDate = parseRuDate(toStr);
 
   if (!startDate || !endDate) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Неверный формат даты. Используйте ДД.ММ.ГГГГ', color: COLORS.ERROR })], ephemeral: true });
+    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Неверный формат даты. Используйте ДД.ММ.ГГГГ', color: COLORS.ERROR })], flags: MessageFlags.Ephemeral });
   }
 
   if (endDate <= startDate) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Дата окончания должна быть позже даты начала', color: COLORS.ERROR })], ephemeral: true });
+    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Дата окончания должна быть позже даты начала', color: COLORS.ERROR })], flags: MessageFlags.Ephemeral });
   }
 
   const existing = await Inactive.findOne({
@@ -67,7 +67,7 @@ async function handleOn(interaction) {
   });
 
   if (existing) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Вы уже в инактиве. Сначала выйдите через /inactive off', color: COLORS.ERROR })], ephemeral: true });
+    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Вы уже в инактиве. Сначала выйдите через /inactive off', color: COLORS.ERROR })], flags: MessageFlags.Ephemeral });
   }
 
   const inactive = await Inactive.create({
@@ -95,7 +95,7 @@ async function handleOff(interaction) {
   );
 
   if (!inactive) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Вы не в инактиве', color: COLORS.ERROR })], ephemeral: true });
+    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Вы не в инактиве', color: COLORS.ERROR })], flags: MessageFlags.Ephemeral });
   }
 
   const embed = createEmbed({

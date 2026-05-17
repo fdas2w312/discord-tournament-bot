@@ -1,10 +1,12 @@
 const Tournament = require('../models/Tournament');
 const Team = require('../models/Team');
 const { COLORS, createEmbed } = require('../utils/embedBuilder');
+const { MessageFlags } = require('discord.js');
 
 async function findTournament(id) {
-  if (!isNaN(id)) {
-    return await Tournament.findOne({ tournamentId: parseInt(id) });
+  const num = Number(id);
+  if (!isNaN(num) && Number.isInteger(num)) {
+    return await Tournament.findOne({ tournamentId: num });
   }
   return await Tournament.findById(id);
 }
@@ -43,7 +45,7 @@ async function handleApproveSelect(interaction, customId) {
     title: 'Команды одобрены',
     description: `Одобрено команд: **${approved}**`,
     color: COLORS.SUCCESS
-  })], ephemeral: true });
+  })], flags: MessageFlags.Ephemeral });
 }
 
 async function handleRejectSelect(interaction, customId) {
@@ -64,7 +66,7 @@ async function handleRejectSelect(interaction, customId) {
     title: 'Команды отклонены',
     description: `Отклонено команд: **${rejected}**`,
     color: COLORS.WARNING
-  })], ephemeral: true });
+  })], flags: MessageFlags.Ephemeral });
 }
 
 async function handleWinnerSelect(interaction, customId) {
@@ -75,7 +77,7 @@ async function handleWinnerSelect(interaction, customId) {
   const team = await Team.findById(teamId);
 
   if (!tournament || !team) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Турнир или команда не найдены', color: COLORS.ERROR })], ephemeral: true });
+    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Турнир или команда не найдены', color: COLORS.ERROR })], flags: MessageFlags.Ephemeral });
   }
 
   tournament.winnerTeamId = teamId;

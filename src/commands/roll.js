@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, StringSelectMenuBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { SlashCommandBuilder, StringSelectMenuBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
 const Roll = require('../models/Roll');
 const { COLORS, createEmbed, buildProgressBar, formatTime, parseTimeInput } = require('../utils/embedBuilder');
 
@@ -125,8 +125,8 @@ module.exports = {
 
     return interaction.respond(
       rolls.map(r => ({
-        name: `${r.prize} (до ${r.endTime.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })})`,
-        value: r._id.toString()
+        name: `#${r.rollId} — ${r.prize} (до ${r.endTime.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })})`,
+        value: r.rollId.toString()
       }))
     );
   }
@@ -138,7 +138,7 @@ async function handleStart(interaction) {
 
   const endTime = parseTimeInput(timeStr);
   if (!endTime) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Неверный формат времени. Используйте ЧЧ:ММ (например 19:40)', color: COLORS.ERROR })], ephemeral: true });
+    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Неверный формат времени. Используйте ЧЧ:ММ (например 19:40)', color: COLORS.ERROR })], flags: MessageFlags.Ephemeral });
   }
 
   const roll = await Roll.create({
@@ -166,25 +166,27 @@ async function handleStart(interaction) {
 }
 
 async function handleDelete(interaction) {
-  const rollId = interaction.options.getString('ролл');
-  const roll = await Roll.findOne({ _id: rollId, guildId: interaction.guild.id, type: 'normal', status: 'active' });
+  const rollIdStr = interaction.options.getString('ролл');
+  const rollIdNum = parseInt(rollIdStr, 10);
+  const roll = await Roll.findOne({ rollId: rollIdNum, guildId: interaction.guild.id, type: 'normal', status: 'active' });
 
   if (!roll) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Ролл не найден', color: COLORS.ERROR })], ephemeral: true });
+    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Ролл не найден', color: COLORS.ERROR })], flags: MessageFlags.Ephemeral });
   }
 
   roll.status = 'cancelled';
   await roll.save();
 
-  return interaction.reply({ embeds: [createEmbed({ title: 'Ролл удалён', description: `Ролл "${roll.prize}" отменён`, color: COLORS.SUCCESS })] });
+  return interaction.reply({ embeds: [createEmbed({ title: 'Ролл удалён', description: `Ролл #${roll.rollId} "${roll.prize}" отменён`, color: COLORS.SUCCESS })] });
 }
 
 async function handleEmergency(interaction) {
-  const rollId = interaction.options.getString('ролл');
-  const roll = await Roll.findOne({ _id: rollId, guildId: interaction.guild.id, type: 'normal', status: 'active' });
+  const rollIdStr = interaction.options.getString('ролл');
+  const rollIdNum = parseInt(rollIdStr, 10);
+  const roll = await Roll.findOne({ rollId: rollIdNum, guildId: interaction.guild.id, type: 'normal', status: 'active' });
 
   if (!roll) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Ролл не найден', color: COLORS.ERROR })], ephemeral: true });
+    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Ролл не найден', color: COLORS.ERROR })], flags: MessageFlags.Ephemeral });
   }
 
   await executeRoll(roll, interaction.client, interaction);
@@ -197,12 +199,12 @@ async function handleReakStart(interaction) {
 
   const endTime = parseTimeInput(timeStr);
   if (!endTime) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Неверный формат времени. Используйте ЧЧ:ММ (например 19:40)', color: COLORS.ERROR })], ephemeral: true });
+    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Неверный формат времени. Используйте ЧЧ:ММ (например 19:40)', color: COLORS.ERROR })], flags: MessageFlags.Ephemeral });
   }
 
   const linkMatch = messageLink.match(/discord\.com\/channels\/(\d+)\/(\d+)\/(\d+)/);
   if (!linkMatch) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Неверная ссылка на сообщение', color: COLORS.ERROR })], ephemeral: true });
+    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Неверная ссылка на сообщение', color: COLORS.ERROR })], flags: MessageFlags.Ephemeral });
   }
 
   const [, , channelId, messageId] = linkMatch;
@@ -211,7 +213,7 @@ async function handleReakStart(interaction) {
     const channel = await interaction.client.channels.fetch(channelId);
     sourceMessage = await channel.messages.fetch(messageId);
   } catch {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Не удалось получить сообщение. Проверьте ссылку и права бота.', color: COLORS.ERROR })], ephemeral: true });
+    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Не удалось получить сообщение. Проверьте ссылку и права бота.', color: COLORS.ERROR })], flags: MessageFlags.Ephemeral });
   }
 
   const reactedUsers = new Set();
@@ -245,25 +247,27 @@ async function handleReakStart(interaction) {
 }
 
 async function handleReakDelete(interaction) {
-  const rollId = interaction.options.getString('ролл');
-  const roll = await Roll.findOne({ _id: rollId, guildId: interaction.guild.id, type: 'reak', status: 'active' });
+  const rollIdStr = interaction.options.getString('ролл');
+  const rollIdNum = parseInt(rollIdStr, 10);
+  const roll = await Roll.findOne({ rollId: rollIdNum, guildId: interaction.guild.id, type: 'reak', status: 'active' });
 
   if (!roll) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Ролл не найден', color: COLORS.ERROR })], ephemeral: true });
+    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Ролл не найден', color: COLORS.ERROR })], flags: MessageFlags.Ephemeral });
   }
 
   roll.status = 'cancelled';
   await roll.save();
 
-  return interaction.reply({ embeds: [createEmbed({ title: 'Ролл по реакциям удалён', description: `Ролл "${roll.prize}" отменён`, color: COLORS.SUCCESS })] });
+  return interaction.reply({ embeds: [createEmbed({ title: 'Ролл по реакциям удалён', description: `Ролл #${roll.rollId} "${roll.prize}" отменён`, color: COLORS.SUCCESS })] });
 }
 
 async function handleReakEmergency(interaction) {
-  const rollId = interaction.options.getString('ролл');
-  const roll = await Roll.findOne({ _id: rollId, guildId: interaction.guild.id, type: 'reak', status: 'active' });
+  const rollIdStr = interaction.options.getString('ролл');
+  const rollIdNum = parseInt(rollIdStr, 10);
+  const roll = await Roll.findOne({ rollId: rollIdNum, guildId: interaction.guild.id, type: 'reak', status: 'active' });
 
   if (!roll) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Ролл не найден', color: COLORS.ERROR })], ephemeral: true });
+    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Ролл не найден', color: COLORS.ERROR })], flags: MessageFlags.Ephemeral });
   }
 
   await executeRoll(roll, interaction.client, interaction);
@@ -289,7 +293,7 @@ async function executeRoll(roll, client, interaction) {
 
   const embed = createEmbed({
     title: '🎉 Ролл завершён!',
-    description: `**Приз:** ${roll.prize}\n**Победитель:** <@${winnerId}>\n**Участников:** ${participants.length}\n**Тип:** ${roll.type === 'reak' ? 'По реакциям' : 'Обычный'}\n\n**Все участники:**\n${participantList}`,
+    description: `**Ролл:** #${roll.rollId}\n**Приз:** ${roll.prize}\n**Победитель:** <@${winnerId}>\n**Участников:** ${participants.length}\n**Тип:** ${roll.type === 'reak' ? 'По реакциям' : 'Обычный'}\n\n**Все участники:**\n${participantList}`,
     color: COLORS.SUCCESS
   });
 
@@ -304,7 +308,7 @@ function buildRollEmbed(roll, progressPercent) {
 
   return createEmbed({
     title: '🎉 Ролл приза!',
-    description: `**Приз:** ${roll.prize}\n**Осталось:** ${formatTime(remaining)}\n\n${bar} ${Math.round(percent)}%\n\n**Участников:** ${roll.participants.length}`,
+    description: `**Ролл:** #${roll.rollId}\n**Приз:** ${roll.prize}\n**Осталось:** ${formatTime(remaining)}\n\n${bar} ${Math.round(percent)}%\n\n**Участников:** ${roll.participants.length}`,
     color: COLORS.ROLL,
     footer: 'Нажмите кнопку чтобы участвовать!'
   });
@@ -318,7 +322,7 @@ function buildReakRollEmbed(roll, progressPercent) {
 
   return createEmbed({
     title: '🎉 Ролл по реакциям!',
-    description: `**Приз:** ${roll.prize}\n**Осталось:** ${formatTime(remaining)}\n\n${bar} ${Math.round(percent)}%\n\n**Участников (из реакций):** ${roll.capturedReactions.length}`,
+    description: `**Ролл:** #${roll.rollId}\n**Приз:** ${roll.prize}\n**Осталось:** ${formatTime(remaining)}\n\n${bar} ${Math.round(percent)}%\n\n**Участников (из реакций):** ${roll.capturedReactions.length}`,
     color: COLORS.ROLL,
     footer: 'Ролл между теми, кто уже поставил реакции!'
   });

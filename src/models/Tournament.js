@@ -21,11 +21,11 @@ const tournamentSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now }
 });
 
-tournamentSchema.pre('validate', async function(next) {
+// Правильный async pre-validate для Mongoose 8.x — БЕЗ next()
+tournamentSchema.pre('validate', async function() {
   if (this.isNew && !this.tournamentId) {
     this.tournamentId = await Counter.getNext('tournament');
   }
-  next();
 });
 
 module.exports = mongoose.model('Tournament', tournamentSchema);

@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, PermissionFlagsBits, MessageFlags } = require('discord.js');
 const Tournament = require('../models/Tournament');
 const Team = require('../models/Team');
 const Settings = require('../models/Settings');
@@ -89,13 +89,22 @@ module.exports = {
 
   async autocomplete(interaction) {
     const focused = interaction.options.getFocused();
-    const tournaments = await Tournament.find({
-      guildId: interaction.guild.id,
-      $or: [
+    const query = {
+      guildId: interaction.guild.id
+    };
+
+    // Безопасный поиск по tournamentId — только если focused — реальное число
+    const focusedNum = Number(focused);
+    if (focused.trim() !== '' && !isNaN(focusedNum) && Number.isInteger(focusedNum)) {
+      query.$or = [
         { name: { $regex: focused, $options: 'i' } },
-        { tournamentId: !isNaN(focused) ? parseInt(focused) : -1 }
-      ]
-    }).limit(25);
+        { tournamentId: focusedNum }
+      ];
+    } else {
+      query.name = { $regex: focused, $options: 'i' };
+    }
+
+    const tournaments = await Tournament.find(query).limit(25);
     return interaction.respond(
       tournaments.map(t => ({ name: `#${t.tournamentId} — ${t.name}`, value: t.tournamentId.toString() }))
     );
@@ -112,19 +121,19 @@ async function handleCreate(interaction) {
     const memberRoles = interaction.member.roles.cache.map(r => r.id);
     const hasAdmin = settings.tournamentAdminRoles.some(r => memberRoles.includes(r));
     if (!hasAdmin && !interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
-      return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'У вас нет прав для создания турниров', color: COLORS.ERROR })], ephemeral: true });
+      return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'У вас нет прав для создания турниров', color: COLORS.ERROR })], flags: MessageFlags.Ephemeral });
     }
   }
 
   const existing = await Tournament.findOne({ guildId: interaction.guild.id, name, status: { $ne: 'completed' } });
   if (existing) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: `Турнир "${name}" уже существует`, color: COLORS.ERROR })], ephemeral: true });
+    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: `Турнир "${name}" уже существует`, color: COLORS.ERROR })], flags: MessageFlags.Ephemeral });
   }
 
   let teamSize;
   if (format === 'custom') {
     if (!customSize) {
-      return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Укажите custom_размер для формата Custom', color: COLORS.ERROR })], ephemeral: true });
+      return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Укажите custom_размер для формата Custom', color: COLORS.ERROR })], flags: MessageFlags.Ephemeral });
     }
     teamSize = customSize;
   } else {
@@ -158,15 +167,16 @@ async function handlePanel(interaction) {
   const tournamentInput = interaction.options.getString('турнир');
   // Попробуем найти по tournamentId (число) или по названию
   let tournament;
-  if (!isNaN(tournamentInput)) {
-    tournament = await Tournament.findOne({ guildId: interaction.guild.id, tournamentId: parseInt(tournamentInput), status: { $ne: 'completed' } });
+  const inputNum = Number(tournamentInput);
+  if (!isNaN(inputNum) && Number.isInteger(inputNum)) {
+    tournament = await Tournament.findOne({ guildId: interaction.guild.id, tournamentId: inputNum, status: { $ne: 'completed' } });
   }
   if (!tournament) {
     tournament = await Tournament.findOne({ guildId: interaction.guild.id, name: tournamentInput, status: { $ne: 'completed' } });
   }
 
   if (!tournament) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: `Турнир не найден`, color: COLORS.ERROR })], ephemeral: true });
+    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: `Турнир не найден`, color: COLORS.ERROR })], flags: MessageFlags.Ephemeral });
   }
 
   const teamCount = await Team.countDocuments({ tournamentId: tournament._id, status: { $in: ['pending', 'approved'] } });
@@ -207,15 +217,16 @@ async function handleAsk(interaction) {
   const style = interaction.options.getString('стиль') || 'SHORT';
 
   let tournament;
-  if (!isNaN(tournamentInput)) {
-    tournament = await Tournament.findOne({ guildId: interaction.guild.id, tournamentId: parseInt(tournamentInput), status: { $ne: 'completed' } });
+  const inputNum = Number(tournamentInput);
+  if (!isNaN(inputNum) && Number.isInteger(inputNum)) {
+    tournament = await Tournament.findOne({ guildId: interaction.guild.id, tournamentId: inputNum, status: { $ne: 'completed' } });
   }
   if (!tournament) {
     tournament = await Tournament.findOne({ guildId: interaction.guild.id, name: tournamentInput, status: { $ne: 'completed' } });
   }
 
   if (!tournament) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: `Турнир не найден`, color: COLORS.ERROR })], ephemeral: true });
+    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: `Турнир не найден`, color: COLORS.ERROR })], flags: MessageFlags.Ephemeral });
   }
 
   const settings = await Settings.findOne({ guildId: interaction.guild.id });
@@ -223,7 +234,7 @@ async function handleAsk(interaction) {
     const memberRoles = interaction.member.roles.cache.map(r => r.id);
     const hasAdmin = settings.tournamentAdminRoles.some(r => memberRoles.includes(r));
     if (!hasAdmin && !interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
-      return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'У вас нет прав для создания анкеты', color: COLORS.ERROR })], ephemeral: true });
+      return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'У вас нет прав для создания анкеты', color: COLORS.ERROR })], flags: MessageFlags.Ephemeral });
     }
   }
 
@@ -239,7 +250,7 @@ async function handleAsk(interaction) {
 
   const embed = createEmbed({
     title: 'Вопрос добавлен!',
-    description: `**Турнир:** ${tournament.name}\n**Всего вопросов:** ${tournament.questionnaire.length}\n\n${questionList}`,
+    description: `**Турнир:** #${tournament.tournamentId} ${tournament.name}\n**Всего вопросов:** ${tournament.questionnaire.length}\n\n${questionList}`,
     color: COLORS.SUCCESS,
     footer: 'Используйте /tournament ask чтобы добавить ещё вопросы'
   });
@@ -282,13 +293,13 @@ async function handleSettings(interaction) {
         description: `Админ-роли: ${currentAdmins}\nРоль участников: ${currentPart}`,
         color: COLORS.INFO
       })],
-      ephemeral: true
+      flags: MessageFlags.Ephemeral
     });
   }
 
   await settings.save();
   return interaction.reply({
     embeds: [createEmbed({ title: 'Настройки обновлены', description: updates.join('\n'), color: COLORS.SUCCESS })],
-    ephemeral: true
+    flags: MessageFlags.Ephemeral
   });
 }

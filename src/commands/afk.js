@@ -1,7 +1,6 @@
-const { SlashCommandBuilder } = require('discord.js');
+const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const AFK = require('../models/AFK');
-const Inactive = require('../models/Inactive');
-const { COLORS, createEmbed, formatDate } = require('../utils/embedBuilder');
+const { COLORS, createEmbed } = require('../utils/embedBuilder');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -44,7 +43,7 @@ async function handleOn(interaction) {
   });
 
   if (existing) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Вы уже в AFK. Сначала выйдите через /afk off', color: COLORS.ERROR })], ephemeral: true });
+    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Вы уже в AFK. Сначала выйдите через /afk off', color: COLORS.ERROR })], flags: MessageFlags.Ephemeral });
   }
 
   const afk = await AFK.create({
@@ -71,7 +70,7 @@ async function handleOff(interaction) {
   );
 
   if (!afk) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Вы не в AFK', color: COLORS.ERROR })], ephemeral: true });
+    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Вы не в AFK', color: COLORS.ERROR })], flags: MessageFlags.Ephemeral });
   }
 
   const embed = createEmbed({

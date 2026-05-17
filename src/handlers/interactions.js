@@ -1,4 +1,4 @@
-const { ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, StringSelectMenuBuilder, UserSelectMenuBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, StringSelectMenuBuilder, UserSelectMenuBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
 const Tournament = require('../models/Tournament');
 const Team = require('../models/Team');
 const Settings = require('../models/Settings');
@@ -6,8 +6,9 @@ const { COLORS, createEmbed } = require('../utils/embedBuilder');
 
 // Helper: найти турнир по tournamentId (число) или _id
 async function findTournament(id) {
-  if (!isNaN(id)) {
-    return await Tournament.findOne({ tournamentId: parseInt(id) });
+  const num = Number(id);
+  if (!isNaN(num) && Number.isInteger(num)) {
+    return await Tournament.findOne({ tournamentId: num });
   }
   return await Tournament.findById(id);
 }
@@ -66,7 +67,7 @@ module.exports = {
   }
 };
 
-const TOURNEY_ERR = { embeds: [createEmbed({ title: 'Ошибка', description: 'Турнир не найден', color: COLORS.ERROR })], ephemeral: true };
+const TOURNEY_ERR = { embeds: [createEmbed({ title: 'Ошибка', description: 'Турнир не найден', color: COLORS.ERROR })], flags: MessageFlags.Ephemeral };
 
 async function handleParticipate(interaction, customId) {
   const tid = customId.replace('tournament_participate_', '');
@@ -74,7 +75,7 @@ async function handleParticipate(interaction, customId) {
   if (!tournament) return interaction.reply(TOURNEY_ERR);
 
   if (tournament.status !== 'open') {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Регистрация на турнир закрыта', color: COLORS.ERROR })], ephemeral: true });
+    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Регистрация на турнир закрыта', color: COLORS.ERROR })], flags: MessageFlags.Ephemeral });
   }
 
   // 1x1 — один участник, без выбора
@@ -110,7 +111,7 @@ async function handleParticipate(interaction, customId) {
     .setMaxValues(maxSelect);
 
   const row = new ActionRowBuilder().addComponents(selectMenu);
-  return interaction.reply({ content: 'Выберите участников вашей команды:', components: [row], ephemeral: true });
+  return interaction.reply({ content: 'Выберите участников вашей команды:', components: [row], flags: MessageFlags.Ephemeral });
 }
 
 async function handleMemberSelect(interaction, customId) {
@@ -122,7 +123,7 @@ async function handleMemberSelect(interaction, customId) {
   const allMembers = [interaction.user, ...selectedMembers.values()];
 
   if (allMembers.length > tournament.teamSize) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: `Слишком много участников. Максимум: ${tournament.teamSize}`, color: COLORS.ERROR })], ephemeral: true });
+    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: `Слишком много участников. Максимум: ${tournament.teamSize}`, color: COLORS.ERROR })], flags: MessageFlags.Ephemeral });
   }
 
   if (tournament.questionnaire && tournament.questionnaire.length > 0) {
@@ -206,7 +207,7 @@ async function registerTeam(tournament, members, answers, interaction) {
     }
   }
 
-  return interaction.reply({ embeds: [embed], ephemeral: true });
+  return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 }
 
 async function handleTeams(interaction, customId) {
@@ -217,7 +218,7 @@ async function handleTeams(interaction, customId) {
   const teams = await Team.find({ tournamentId: tournament._id, status: { $in: ['pending', 'approved'] } });
 
   if (teams.length === 0) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Команды', description: 'Пока нет зарегистрированных команд', color: COLORS.INFO })], ephemeral: true });
+    return interaction.reply({ embeds: [createEmbed({ title: 'Команды', description: 'Пока нет зарегистрированных команд', color: COLORS.INFO })], flags: MessageFlags.Ephemeral });
   }
 
   const fields = teams.map((team, i) => ({
@@ -233,7 +234,7 @@ async function handleTeams(interaction, customId) {
     fields: fields.slice(0, 25)
   });
 
-  return interaction.reply({ embeds: [embed], ephemeral: true });
+  return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 }
 
 async function handleManage(interaction, customId) {
@@ -248,7 +249,7 @@ async function handleManage(interaction, customId) {
                   interaction.member.permissions.has('Administrator');
 
   if (!isAdmin) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'У вас нет прав для управления турниром', color: COLORS.ERROR })], ephemeral: true });
+    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'У вас нет прав для управления турниром', color: COLORS.ERROR })], flags: MessageFlags.Ephemeral });
   }
 
   const pendingTeams = await Team.find({ tournamentId: tournament._id, status: 'pending' });
@@ -295,7 +296,7 @@ async function handleManage(interaction, customId) {
     color: COLORS.TOURNAMENT
   });
 
-  return interaction.reply({ embeds: [embed], components: [row1, row2], ephemeral: true });
+  return interaction.reply({ embeds: [embed], components: [row1, row2], flags: MessageFlags.Ephemeral });
 }
 
 async function handleApproveTeam(interaction, customId) {
@@ -306,7 +307,7 @@ async function handleApproveTeam(interaction, customId) {
   const pendingTeams = await Team.find({ tournamentId: tournament._id, status: 'pending' });
 
   if (pendingTeams.length === 0) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Нет команд', description: 'Нет команд, ожидающих одобрения', color: COLORS.INFO })], ephemeral: true });
+    return interaction.reply({ embeds: [createEmbed({ title: 'Нет команд', description: 'Нет команд, ожидающих одобрения', color: COLORS.INFO })], flags: MessageFlags.Ephemeral });
   }
 
   const options = pendingTeams.slice(0, 25).map(t => ({
@@ -323,7 +324,7 @@ async function handleApproveTeam(interaction, customId) {
     .addOptions(options);
 
   const row = new ActionRowBuilder().addComponents(select);
-  return interaction.reply({ content: 'Выберите команды для одобрения:', components: [row], ephemeral: true });
+  return interaction.reply({ content: 'Выберите команды для одобрения:', components: [row], flags: MessageFlags.Ephemeral });
 }
 
 async function handleRejectTeam(interaction, customId) {
@@ -334,7 +335,7 @@ async function handleRejectTeam(interaction, customId) {
   const pendingTeams = await Team.find({ tournamentId: tournament._id, status: 'pending' });
 
   if (pendingTeams.length === 0) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Нет команд', description: 'Нет команд, ожидающих отклонения', color: COLORS.INFO })], ephemeral: true });
+    return interaction.reply({ embeds: [createEmbed({ title: 'Нет команд', description: 'Нет команд, ожидающих отклонения', color: COLORS.INFO })], flags: MessageFlags.Ephemeral });
   }
 
   const options = pendingTeams.slice(0, 25).map(t => ({
@@ -351,7 +352,7 @@ async function handleRejectTeam(interaction, customId) {
     .addOptions(options);
 
   const row = new ActionRowBuilder().addComponents(select);
-  return interaction.reply({ content: 'Выберите команды для отклонения:', components: [row], ephemeral: true });
+  return interaction.reply({ content: 'Выберите команды для отклонения:', components: [row], flags: MessageFlags.Ephemeral });
 }
 
 async function handleCloseTournament(interaction, customId) {
@@ -366,7 +367,7 @@ async function handleCloseTournament(interaction, customId) {
     title: `🔒 Турнир #${tournament.tournamentId} "${tournament.name}" закрыт`,
     description: 'Регистрация закрыта. Новые команды не могут подать заявку.',
     color: COLORS.WARNING
-  })], ephemeral: true });
+  })], flags: MessageFlags.Ephemeral });
 }
 
 async function handleOpenTournament(interaction, customId) {
@@ -381,7 +382,7 @@ async function handleOpenTournament(interaction, customId) {
     title: `🔓 Турнир #${tournament.tournamentId} "${tournament.name}" открыт`,
     description: 'Регистрация открыта. Новые команды могут подать заявку.',
     color: COLORS.SUCCESS
-  })], ephemeral: true });
+  })], flags: MessageFlags.Ephemeral });
 }
 
 async function handleManageTeamsList(interaction, customId) {
@@ -392,7 +393,7 @@ async function handleManageTeamsList(interaction, customId) {
   const allTeams = await Team.find({ tournamentId: tournament._id });
 
   if (allTeams.length === 0) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Команды', description: 'Нет команд', color: COLORS.INFO })], ephemeral: true });
+    return interaction.reply({ embeds: [createEmbed({ title: 'Команды', description: 'Нет команд', color: COLORS.INFO })], flags: MessageFlags.Ephemeral });
   }
 
   const statusEmoji = { pending: '⏳', approved: '✅', rejected: '❌', eliminated: '❌' };
@@ -411,7 +412,7 @@ async function handleManageTeamsList(interaction, customId) {
     fields: fields.slice(0, 25)
   });
 
-  return interaction.reply({ embeds: [embed], ephemeral: true });
+  return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 }
 
 async function handleStartTournament(interaction, customId) {
@@ -454,7 +455,7 @@ async function handleWinnersSelect(interaction, customId) {
   const approvedTeams = await Team.find({ tournamentId: tournament._id, status: { $in: ['approved', 'eliminated'] } });
 
   if (approvedTeams.length === 0) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Нет команд для выбора победителя', color: COLORS.ERROR })], ephemeral: true });
+    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Нет команд для выбора победителя', color: COLORS.ERROR })], flags: MessageFlags.Ephemeral });
   }
 
   const options = approvedTeams.slice(0, 25).map(t => ({
@@ -471,7 +472,7 @@ async function handleWinnersSelect(interaction, customId) {
     .addOptions(options);
 
   const row = new ActionRowBuilder().addComponents(select);
-  return interaction.reply({ content: 'Выберите команду-победителя:', components: [row], ephemeral: true });
+  return interaction.reply({ content: 'Выберите команду-победителя:', components: [row], flags: MessageFlags.Ephemeral });
 }
 
 async function handleRollJoin(interaction, customId) {
@@ -480,15 +481,15 @@ async function handleRollJoin(interaction, customId) {
   const roll = await Roll.findById(rollId);
 
   if (!roll || roll.status !== 'active' || roll.type !== 'normal') {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Ролл уже завершён или не найден', color: COLORS.ERROR })], ephemeral: true });
+    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Ролл уже завершён или не найден', color: COLORS.ERROR })], flags: MessageFlags.Ephemeral });
   }
 
   if (roll.participants.includes(interaction.user.id)) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Вы уже участвуете', description: 'Вы уже зарегистрированы в этом ролле', color: COLORS.WARNING })], ephemeral: true });
+    return interaction.reply({ embeds: [createEmbed({ title: 'Вы уже участвуете', description: 'Вы уже зарегистрированы в этом ролле', color: COLORS.WARNING })], flags: MessageFlags.Ephemeral });
   }
 
   roll.participants.push(interaction.user.id);
   await roll.save();
 
-  return interaction.reply({ embeds: [createEmbed({ title: 'Вы участвуете!', description: `Ролл: ${roll.prize}\nУчастников: ${roll.participants.length}`, color: COLORS.SUCCESS })], ephemeral: true });
+  return interaction.reply({ embeds: [createEmbed({ title: 'Вы участвуете!', description: `Ролл: #${roll.rollId} ${roll.prize}\nУчастников: ${roll.participants.length}`, color: COLORS.SUCCESS })], flags: MessageFlags.Ephemeral });
 }

@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder, PermissionFlagsBits, MessageFlags } = require('discord.js');
 const Warning = require('../models/Warning');
 const Settings = require('../models/Settings');
 const { COLORS, createEmbed } = require('../utils/embedBuilder');
@@ -32,8 +32,8 @@ module.exports = {
             .setDescription('Человек, у которого снимают штраф')
             .setRequired(true))
         .addStringOption(opt =>
-          opt.setName('причина')
-            .setDescription('Причина штрафа для удаления')
+          opt.setName('штраф')
+            .setDescription('ID штрафа для удаления (#1, #2 и т.д.)')
             .setRequired(true)
             .setAutocomplete(true))
     )
@@ -85,11 +85,10 @@ module.exports = {
       const warnings = await Warning.find({
         guildId: interaction.guild.id,
         userId: user.id,
-        active: true,
-        reason: { $regex: focused, $options: 'i' }
+        active: true
       }).limit(25);
       return interaction.respond(
-        warnings.map(w => ({ name: `${w.reason} (${w.penaltyName})`, value: w._id.toString() }))
+        warnings.map(w => ({ name: `#${w.warningId} — ${w.reason} (${w.penaltyName})`, value: w.warningId.toString() }))
       );
     }
 
@@ -112,7 +111,7 @@ async function checkWarningAdmin(interaction) {
 async function handleAdd(interaction) {
   const hasPerm = await checkWarningAdmin(interaction);
   if (!hasPerm) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'У вас нет прав для выдачи штрафов', color: COLORS.ERROR })], ephemeral: true });
+    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'У вас нет прав для выдачи штрафов', color: COLORS.ERROR })], flags: MessageFlags.Ephemeral });
   }
 
   const user = interaction.options.getUser('человек');
@@ -123,12 +122,12 @@ async function handleAdd(interaction) {
   const penalty = settings?.warningPenalties?.find(p => p.name === penaltyName);
 
   if (!penalty) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: `Штраф "${penaltyName}" не найден. Настройте его через /warning set`, color: COLORS.ERROR })], ephemeral: true });
+    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: `Штраф "${penaltyName}" не найден. Настройте его через /warning set`, color: COLORS.ERROR })], flags: MessageFlags.Ephemeral });
   }
 
   const member = await interaction.guild.members.fetch(user.id).catch(() => null);
   if (!member) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Пользователь не найден на сервере', color: COLORS.ERROR })], ephemeral: true });
+    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Пользователь не найден на сервере', color: COLORS.ERROR })], flags: MessageFlags.Ephemeral });
   }
 
   await member.roles.add(penalty.roleId).catch(() => {});
@@ -145,7 +144,7 @@ async function handleAdd(interaction) {
 
   const embed = createEmbed({
     title: 'Штраф выдан',
-    description: `**Пользователь:** ${user}\n**Причина:** ${reason}\n**Штраф:** ${penalty.name} (<@&${penalty.roleId}>)\n**Выдал:** ${interaction.user}`,
+    description: `**ID:** #${warning.warningId}\n**Пользователь:** ${user}\n**Причина:** ${reason}\n**Штраф:** ${penalty.name} (<@&${penalty.roleId}>)\n**Выдал:** ${interaction.user}`,
     color: COLORS.WARNING
   });
 
@@ -155,15 +154,21 @@ async function handleAdd(interaction) {
 async function handleDelete(interaction) {
   const hasPerm = await checkWarningAdmin(interaction);
   if (!hasPerm) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'У вас нет прав для снятия штрафов', color: COLORS.ERROR })], ephemeral: true });
+    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'У вас нет прав для снятия штрафов', color: COLORS.ERROR })], flags: MessageFlags.Ephemeral });
   }
 
   const user = interaction.options.getUser('человек');
-  const warningId = interaction.options.getString('причина');
+  const warningIdStr = interaction.options.getString('штраф');
+  const warningIdNum = parseInt(warningIdStr, 10);
 
-  const warning = await Warning.findOne({ _id: warningId, guildId: interaction.guild.id, userId: user.id, active: true });
+  const warning = await Warning.findOne({
+    warningId: warningIdNum,
+    guildId: interaction.guild.id,
+    userId: user.id,
+    active: true
+  });
   if (!warning) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Штраф не найден', color: COLORS.ERROR })], ephemeral: true });
+    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Штраф не найден', color: COLORS.ERROR })], flags: MessageFlags.Ephemeral });
   }
 
   warning.active = false;
@@ -184,7 +189,7 @@ async function handleDelete(interaction) {
 
   const embed = createEmbed({
     title: 'Штраф снят',
-    description: `**Пользователь:** ${user}\n**Причина:** ${warning.reason}\n**Штраф:** ${warning.penaltyName}\n**Снял:** ${interaction.user}`,
+    description: `**ID:** #${warning.warningId}\n**Пользователь:** ${user}\n**Причина:** ${warning.reason}\n**Штраф:** ${warning.penaltyName}\n**Снял:** ${interaction.user}`,
     color: COLORS.SUCCESS
   });
 
@@ -219,7 +224,7 @@ async function handleSet(interaction) {
     }
     updates.push(`Штраф "${penaltyName}" → ${penaltyRole.name}`);
   } else if (penaltyName && !penaltyRole) {
-    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Для добавления штрафа укажите и название, и роль', color: COLORS.ERROR })], ephemeral: true });
+    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Для добавления штрафа укажите и название, и роль', color: COLORS.ERROR })], flags: MessageFlags.Ephemeral });
   }
 
   if (updates.length === 0) {
@@ -236,13 +241,13 @@ async function handleSet(interaction) {
         description: `**Админ-роли:** ${currentAdmins}\n**Штрафы:**\n${currentPenalties}`,
         color: COLORS.INFO
       })],
-      ephemeral: true
+      flags: MessageFlags.Ephemeral
     });
   }
 
   await settings.save();
   return interaction.reply({
     embeds: [createEmbed({ title: 'Настройки штрафов обновлены', description: updates.join('\n'), color: COLORS.SUCCESS })],
-    ephemeral: true
+    flags: MessageFlags.Ephemeral
   });
 }

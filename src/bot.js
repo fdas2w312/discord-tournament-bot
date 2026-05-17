@@ -3,7 +3,7 @@ require('dotenv').config();
 // Устанавливаем часовой пояс по умолчанию (Москва)
 if (!process.env.TZ) process.env.TZ = 'Europe/Moscow';
 
-const { Client, GatewayIntentBits, Partials, Events, Collection } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, Events, Collection, MessageFlags } = require('discord.js');
 const { connect } = require('./database/connection');
 const Scheduler = require('./utils/scheduler');
 
@@ -129,20 +129,31 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
   } catch (error) {
     console.error('[Error]', error);
+
+    // Для autocomplete нельзя использовать reply — только respond
+    if (interaction.isAutocomplete()) {
+      try {
+        await interaction.respond([]);
+      } catch {}
+      return;
+    }
+
     const errorEmbed = {
       embeds: [{
         title: 'Ошибка',
         description: 'Произошла ошибка при выполнении команды',
         color: 0xED4245
       }],
-      ephemeral: true
+      flags: MessageFlags.Ephemeral
     };
 
-    if (interaction.replied || interaction.deferred) {
-      await interaction.followUp(errorEmbed).catch(() => {});
-    } else {
-      await interaction.reply(errorEmbed).catch(() => {});
-    }
+    try {
+      if (interaction.replied || interaction.deferred) {
+        await interaction.followUp(errorEmbed);
+      } else {
+        await interaction.reply(errorEmbed);
+      }
+    } catch {}
   }
 });
 
