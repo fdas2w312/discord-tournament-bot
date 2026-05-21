@@ -32,9 +32,9 @@ module.exports = {
     }
 
     // Нельзя отправлять @everyone и @here
-    if (role.id === interaction.guild.id) {
+    if (!role || role.id === interaction.guild.id) {
       return interaction.reply({
-        embeds: [createEmbed({ title: 'Ошибка', description: 'Нельзя отправлять сообщение роли @everyone', color: COLORS.ERROR })],
+        embeds: [createEmbed({ title: 'Ошибка', description: role ? 'Нельзя отправлять сообщение роли @everyone' : 'Роль не найдена', color: COLORS.ERROR })],
         flags: MessageFlags.Ephemeral
       });
     }
