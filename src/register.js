@@ -19,11 +19,11 @@ const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
     console.log(`Registering ${commands.length} application commands...`);
 
     const data = await rest.put(
-      Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID),
+      Routes.applicationCommands(process.env.CLIENT_ID),
       { body: commands.map(c => c.data.toJSON()) }
     );
 
-    console.log(`Successfully registered ${data.length} commands.`);
+    console.log(`Successfully registered ${data.length} global commands.`);
   } catch (error) {
     console.error('Error:', error);
   }
