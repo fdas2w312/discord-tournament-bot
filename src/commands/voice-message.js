@@ -31,6 +31,14 @@ module.exports = {
       });
     }
 
+    // Проверка что команда вызвана на сервере
+    if (!interaction.guild) {
+      return interaction.reply({
+        embeds: [createEmbed({ title: 'Ошибка', description: 'Эту команду можно использовать только на сервере', color: COLORS.ERROR })],
+        flags: MessageFlags.Ephemeral
+      });
+    }
+
     // Нельзя отправлять @everyone и @here
     if (!role || role.id === interaction.guild.id) {
       return interaction.reply({
