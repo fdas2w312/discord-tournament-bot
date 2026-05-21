@@ -14,7 +14,8 @@ const commands = [
   require('./commands/afk'),
   require('./commands/inactive'),
   require('./commands/status'),
-  require('./commands/message')
+  require('./commands/message'),
+  require('./commands/voice-message')
 ];
 
 const interactionHandler = require('./handlers/interactions');
