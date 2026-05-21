@@ -159,7 +159,7 @@ async function handleStart(interaction) {
       .setEmoji('🎉')
   );
 
-  const message = await interaction.reply({ embeds: [embed], components: [row], fetchReply: true });
+  const message = await interaction.reply({ embeds: [embed], components: [row], withResponse: true });
   roll.messageId = message.id;
   roll.channelId = message.channel.id;
   await roll.save();
@@ -168,6 +168,9 @@ async function handleStart(interaction) {
 async function handleDelete(interaction) {
   const rollIdStr = interaction.options.getString('ролл');
   const rollIdNum = parseInt(rollIdStr, 10);
+  if (isNaN(rollIdNum)) {
+    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Неверный формат ID ролла', color: COLORS.ERROR })], flags: MessageFlags.Ephemeral });
+  }
   const roll = await Roll.findOne({ rollId: rollIdNum, guildId: interaction.guild.id, type: 'normal', status: 'active' });
 
   if (!roll) {
@@ -183,6 +186,9 @@ async function handleDelete(interaction) {
 async function handleEmergency(interaction) {
   const rollIdStr = interaction.options.getString('ролл');
   const rollIdNum = parseInt(rollIdStr, 10);
+  if (isNaN(rollIdNum)) {
+    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Неверный формат ID ролла', color: COLORS.ERROR })], flags: MessageFlags.Ephemeral });
+  }
   const roll = await Roll.findOne({ rollId: rollIdNum, guildId: interaction.guild.id, type: 'normal', status: 'active' });
 
   if (!roll) {
@@ -240,7 +246,7 @@ async function handleReakStart(interaction) {
 
   const embed = buildReakRollEmbed(roll, 0);
 
-  const message = await interaction.reply({ embeds: [embed], fetchReply: true });
+  const message = await interaction.reply({ embeds: [embed], withResponse: true });
   roll.messageId = message.id;
   roll.channelId = message.channel.id;
   await roll.save();
@@ -249,6 +255,9 @@ async function handleReakStart(interaction) {
 async function handleReakDelete(interaction) {
   const rollIdStr = interaction.options.getString('ролл');
   const rollIdNum = parseInt(rollIdStr, 10);
+  if (isNaN(rollIdNum)) {
+    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Неверный формат ID ролла', color: COLORS.ERROR })], flags: MessageFlags.Ephemeral });
+  }
   const roll = await Roll.findOne({ rollId: rollIdNum, guildId: interaction.guild.id, type: 'reak', status: 'active' });
 
   if (!roll) {
@@ -264,6 +273,9 @@ async function handleReakDelete(interaction) {
 async function handleReakEmergency(interaction) {
   const rollIdStr = interaction.options.getString('ролл');
   const rollIdNum = parseInt(rollIdStr, 10);
+  if (isNaN(rollIdNum)) {
+    return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'Неверный формат ID ролла', color: COLORS.ERROR })], flags: MessageFlags.Ephemeral });
+  }
   const roll = await Roll.findOne({ rollId: rollIdNum, guildId: interaction.guild.id, type: 'reak', status: 'active' });
 
   if (!roll) {
