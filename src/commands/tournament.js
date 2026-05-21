@@ -120,7 +120,7 @@ async function handleCreate(interaction) {
   if (settings?.tournamentAdminRoles?.length) {
     const memberRoles = interaction.member.roles.cache.map(r => r.id);
     const hasAdmin = settings.tournamentAdminRoles.some(r => memberRoles.includes(r));
-    if (!hasAdmin && !interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+    if (!hasAdmin && !interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
       return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'У вас нет прав для создания турниров', color: COLORS.ERROR })], flags: MessageFlags.Ephemeral });
     }
   }
@@ -233,7 +233,7 @@ async function handleAsk(interaction) {
   if (settings?.tournamentAdminRoles?.length) {
     const memberRoles = interaction.member.roles.cache.map(r => r.id);
     const hasAdmin = settings.tournamentAdminRoles.some(r => memberRoles.includes(r));
-    if (!hasAdmin && !interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+    if (!hasAdmin && !interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
       return interaction.reply({ embeds: [createEmbed({ title: 'Ошибка', description: 'У вас нет прав для создания анкеты', color: COLORS.ERROR })], flags: MessageFlags.Ephemeral });
     }
   }

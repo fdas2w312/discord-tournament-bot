@@ -19,7 +19,7 @@ module.exports = {
     const text = interaction.options.getString('текст');
 
     // Только администраторы могут использовать команду
-    if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+    if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
       return interaction.reply({
         embeds: [createEmbed({ title: 'Ошибка', description: 'Только администраторы могут использовать эту команду', color: COLORS.ERROR })],
         flags: MessageFlags.Ephemeral

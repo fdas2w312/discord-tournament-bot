@@ -101,7 +101,7 @@ async function checkWarningAdmin(interaction) {
   if (settings?.warningAdminRoles?.length) {
     const memberRoles = interaction.member.roles.cache.map(r => r.id);
     const hasAdmin = settings.warningAdminRoles.some(r => memberRoles.includes(r));
-    if (!hasAdmin && !interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+    if (!hasAdmin && !interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
       return false;
     }
   }
